@@ -107,7 +107,7 @@ class Block(nn.Module):
         if input_resolution <= window_size:
             self.type = 'W'
 
-        print("Block Initial Type: {}, drop_path_rate:{:.6f}".format(self.type, drop_path))
+        #print("Block Initial Type: {}, drop_path_rate:{:.6f}".format(self.type, drop_path))
         self.ln1 = nn.LayerNorm(input_dim)
         self.msa = WMSA(input_dim, input_dim, head_dim, window_size, self.type)
         self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
@@ -165,12 +165,13 @@ class ConvTransBlock(nn.Module):
 
 class SCUNet(nn.Module):
 
-    def __init__(self, in_nc=3, config=[2,2,2,2,2,2,2], dim=64, drop_path_rate=0.0, input_resolution=256):
+    def __init__(self, in_nc=3, out_nc=3, config=[2,2,2,2,2,2,2], dim=64, drop_path_rate=0.0, input_resolution=256, scale=1):
         super(SCUNet, self).__init__()
         self.config = config
         self.dim = dim
         self.head_dim = 32
         self.window_size = 8
+        self.scale = scale
 
         # drop path rate for each layer
         dpr = [x.item() for x in torch.linspace(0, drop_path_rate, sum(config))]
@@ -211,7 +212,17 @@ class SCUNet(nn.Module):
                     [ConvTransBlock(dim//2, dim//2, self.head_dim, self.window_size, dpr[i+begin], 'W' if not i%2 else 'SW', input_resolution) 
                       for i in range(config[6])]
 
-        self.m_tail = [nn.Conv2d(dim, in_nc, 3, 1, 1, bias=False)]
+        self.m_tail = []
+        if self.scale == 2 or self.scale == 4:
+            self.m_tail += [nn.ConvTranspose2d(dim, dim, 2, 2, 0, bias=False),] + \
+                    [ConvTransBlock(dim//2, dim//2, self.head_dim, self.window_size, dpr[i+begin], 'W' if not i%2 else 'SW', input_resolution*2) 
+                      for i in range(config[7])]
+        if self.scale == 4:
+            self.m_tail += [nn.ConvTranspose2d(dim, dim, 2, 2, 0, bias=False),] + \
+                    [ConvTransBlock(dim//2, dim//2, self.head_dim, self.window_size, dpr[i+begin], 'W' if not i%2 else 'SW', input_resolution*4) 
+                      for i in range(config[8])]
+        self.m_tail += [nn.Conv2d(dim, out_nc, 3, 1, 1, bias=False)]
+
 
         self.m_head = nn.Sequential(*self.m_head)
         self.m_down1 = nn.Sequential(*self.m_down1)
@@ -241,7 +252,7 @@ class SCUNet(nn.Module):
         x = self.m_up1(x+x2)
         x = self.m_tail(x+x1)
 
-        x = x[..., :h, :w]
+        x = x[..., :h*self.scale, :w*self.scale]
         
         return x
 

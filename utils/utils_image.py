@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import os
 import math
 import random
@@ -290,11 +292,14 @@ def uint2tensor3(img):
 
 
 # convert 2/3/4-dimensional torch tensor to uint
-def tensor2uint(img):
+def tensor2uint(img, depth=8):
     img = img.data.squeeze().float().clamp_(0, 1).cpu().numpy()
     if img.ndim == 3:
         img = np.transpose(img, (1, 2, 0))
-    return np.uint8((img*255.0).round())
+    if depth == 8:
+        return np.uint8((img*(2**depth-1)).round())
+    else:
+        return np.uint16((img*(2**depth-1)).round())
 
 
 # --------------------------------------------
@@ -995,6 +1000,104 @@ def imresize_np(img, scale, antialiasing=True):
     return out_2.numpy()
 
 
+# https://github.com/rlaphoenix/VSGAN/blob/master/vsgan/utilities.py
+# https://github.com/rlaphoenix/VSGAN
+
+import gc
+
+def tile_tensor(t: torch.Tensor, overlap: int = 16) -> tuple[torch.Tensor, ...]:
+    """
+    Tile PyTorch Tensor into 4 quadrants with an overlap between tiles.
+    Expects input PyTorch Tensor's shape to end in HW order.
+    """
+    h, w = t.shape[-2:]
+
+    top_left_lr = t[..., : h // 2 + overlap, : w // 2 + overlap]
+    top_right_lr = t[..., : h // 2 + overlap, w // 2 - overlap:]
+    bottom_left_lr = t[..., h // 2 - overlap:, : w // 2 + overlap]
+    bottom_right_lr = t[..., h // 2 - overlap:, w // 2 - overlap:]
+
+    return top_left_lr, top_right_lr, bottom_left_lr, bottom_right_lr
+
+
+def tiled_forward(
+    model: torch.nn.Module,
+    t: torch.Tensor,
+    overlap: int = 16,
+    max_depth: int = None,
+    current_depth: int = 1,
+    scale: int = 4
+) -> tuple[torch.Tensor, int]:
+    """
+    Recursively Tile PyTorch Tensor until the device has enough VRAM.
+    It will try to tile as little as possible, and wont tile unless needed.
+    Expects input PyTorch Tensor's shape to end in HW order.
+    """
+    if current_depth > 10:
+        torch.cuda.empty_cache()
+        gc.collect()
+        raise RecursionError("Exceeded maximum tiling recursion of 10...")
+
+    if max_depth is None or max_depth == current_depth:
+        # attempt non-tiled super-resolution if no known depth, or at depth
+        try:
+            with torch.cuda.amp.autocast():
+                with torch.no_grad():
+                    t_sr = model(t)
+            return t_sr.cpu().float().clamp(0.0, 1.0), current_depth # move to cpu so we aren't hogging VRAM from the other tiles
+        except RuntimeError as e:
+            if "allocate" in str(e) or "CUDA out of memory" in str(e):
+                torch.cuda.empty_cache()
+                gc.collect()  # TODO: Truly beneficial?
+            else:
+                raise
+
+    # Not at known depth, and non-tiled super-resolution failed, try tiled
+    tiles_lr = tile_tensor(t, overlap)
+
+    # take depth from top_left result as the size would be same for all quadrants
+    # by re-using the depth, we can know exactly how much tiling is needed immediately
+    tiles_lr_top_left, depth = tiled_forward(model, tiles_lr[0], overlap, current_depth=current_depth + 1)
+    tiles_lr_top_right, _ = tiled_forward(model, tiles_lr[1], overlap, depth, current_depth=current_depth + 1)
+    tiles_lr_bottom_left, _ = tiled_forward(model, tiles_lr[2], overlap, depth, current_depth=current_depth + 1)
+    tiles_lr_bottom_right, _ = tiled_forward(model, tiles_lr[3], overlap, depth, current_depth=current_depth + 1)
+
+    output_img = join_tiles(
+        (tiles_lr_top_left, tiles_lr_top_right, tiles_lr_bottom_left, tiles_lr_bottom_right),
+        overlap * scale
+    )
+
+    return output_img, depth
+
+
+def join_tiles(tiles: tuple[torch.Tensor, ...], overlap: int) -> torch.Tensor:
+    """
+    Join Tiled PyTorch Tensor quadrants into one large PyTorch Tensor.
+    Expects input PyTorch Tensor's shapes to end in HW order.
+
+    Ensure the overlap value is what it currently is, possibly after
+    super-resolution, not before!
+
+    Parameters:
+        tiles: The PyTorch Tensor tiles you wish to rejoin.
+        overlap: The amount of overlap currently between tiles.
+    """
+    h, w = tiles[0].shape[-2:]
+
+    h = (h - overlap) * 2
+    w = (w - overlap) * 2
+
+
+    joined_tile = torch.empty(tiles[0].shape[:-2] + (h, w), dtype=tiles[0].dtype, device=tiles[0].device)
+    joined_tile[..., : h // 2, : w // 2] = tiles[0][..., : h // 2, : w // 2]
+    joined_tile[..., : h // 2, -w // 2:] = tiles[1][..., : h // 2, -w // 2:]
+    joined_tile[..., -h // 2:, : w // 2] = tiles[2][..., -h // 2:, : w // 2]
+    joined_tile[..., -h // 2:, -w // 2:] = tiles[3][..., -h // 2:, -w // 2:]
+
+    return joined_tile
+
+
+
 if __name__ == '__main__':
     img = imread_uint('test.bmp', 3)
 #    img = uint2single(img)
@@ -1009,7 +1112,6 @@ if __name__ == '__main__':
 #    imssave(patches,'a.png')
 
 
-    
     
     
     
