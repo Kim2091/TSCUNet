@@ -212,16 +212,15 @@ class SCUNet(nn.Module):
                     [ConvTransBlock(dim//2, dim//2, self.head_dim, self.window_size, dpr[i+begin], 'W' if not i%2 else 'SW', input_resolution) 
                       for i in range(config[6])]
 
-        self.m_tail = []
         if self.scale == 2 or self.scale == 4:
-            self.m_tail += [nn.ConvTranspose2d(dim, dim, 2, 2, 0, bias=False),] + \
+            self.m_upscale = [nn.ConvTranspose2d(dim, dim, 2, 2, 0, bias=False),] + \
                     [ConvTransBlock(dim//2, dim//2, self.head_dim, self.window_size, dpr[i+begin], 'W' if not i%2 else 'SW', input_resolution*2) 
                       for i in range(config[7])]
         if self.scale == 4:
-            self.m_tail += [nn.ConvTranspose2d(dim, dim, 2, 2, 0, bias=False),] + \
+            self.m_upscale += [nn.ConvTranspose2d(dim, dim, 2, 2, 0, bias=False),] + \
                     [ConvTransBlock(dim//2, dim//2, self.head_dim, self.window_size, dpr[i+begin], 'W' if not i%2 else 'SW', input_resolution*4) 
                       for i in range(config[8])]
-        self.m_tail += [nn.Conv2d(dim, out_nc, 3, 1, 1, bias=False)]
+        self.m_tail = [nn.Conv2d(dim, out_nc, 3, 1, 1, bias=False)]
 
 
         self.m_head = nn.Sequential(*self.m_head)
@@ -232,6 +231,8 @@ class SCUNet(nn.Module):
         self.m_up3 = nn.Sequential(*self.m_up3)
         self.m_up2 = nn.Sequential(*self.m_up2)
         self.m_up1 = nn.Sequential(*self.m_up1)
+        if self.scale > 1:
+            self.m_upscale = nn.Sequential(*self.m_upscale)
         self.m_tail = nn.Sequential(*self.m_tail)  
         #self.apply(self._init_weights)
 
@@ -250,7 +251,12 @@ class SCUNet(nn.Module):
         x = self.m_up3(x+x4)
         x = self.m_up2(x+x3)
         x = self.m_up1(x+x2)
-        x = self.m_tail(x+x1)
+        x = x + x1
+
+        if self.scale > 1:
+            x = self.m_upscale(x)
+            
+        x = self.m_tail(x)
 
         x = x[..., :h*self.scale, :w*self.scale]
         

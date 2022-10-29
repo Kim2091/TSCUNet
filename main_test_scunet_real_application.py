@@ -26,20 +26,32 @@ def main():
     # Preparation
     # ----------------------------------------
     parser = argparse.ArgumentParser()
-    parser.add_argument('--model_name', type=str, default='scunet_color_real_psnr', help='scunet_color_real_psnr, scunet_color_real_gan')
+    parser.add_argument('--model_name', type=str, default=None, help='scunet_color_real_psnr, scunet_color_real_gan')
+    parser.add_argument('--model_path', type=str, default=None, help='path to the model')
     parser.add_argument('--show_img', type=bool, default=False, help='show the image')
     parser.add_argument('--model_zoo', type=str, default='model_zoo', help='path of model_zoo')
     parser.add_argument('--input', type=str, default='input', help='path of inputs')
     parser.add_argument('--output', type=str, default='output', help='path of results')
     parser.add_argument('--depth', type=int, default=8, help='bit depth of outputs')
     parser.add_argument('--scale', type=int, default=1, help='model scale')
+    parser.add_argument('--res', type=int, default=96, help='input_resolution')
 
     args = parser.parse_args()
 
     n_channels = 3
 
-    result_name = os.path.basename(args.input) + '_' + args.model_name     # fixed
-    model_path = os.path.join(args.model_zoo, args.model_name+'.pth')
+    if not args.model_name and not args.model_path:
+        raise ValueError('Please specify either the model_name or model_path')
+
+    if args.model_name == None:
+        model_path = args.model_path
+        model_name = os.path.splitext(os.path.basename(model_path))[0]
+    else:
+        model_name = args.model_name
+        model_path = os.path.join(args.model_zoo, model_name+'.pth')
+
+    result_name = os.path.basename(args.input) + '_' + model_name     # fixed
+    
 
     # ----------------------------------------
     # L_path, E_path
@@ -58,7 +70,7 @@ def main():
     # load model
     # ----------------------------------------
     from models.network_scunet import SCUNet as net
-    model = net(in_nc=n_channels,config=[4,4,4,4,4,4,4],dim=64)
+    model = net(in_nc=n_channels,config=[4]*9,dim=64, input_resolution=256, scale=args.scale)
 
     model.load_state_dict(torch.load(model_path), strict=True)
     model.eval()
@@ -70,7 +82,7 @@ def main():
     number_parameters = sum(map(lambda x: x.numel(), model.parameters()))
     logger.info('Params number: {}'.format(number_parameters))
 
-    logger.info('model_name:{}'.format(args.model_name))
+    logger.info('model_name:{}'.format(model_name))
     logger.info(L_path)
     L_paths = util.get_image_paths(L_path)
 
@@ -104,7 +116,7 @@ def main():
         # ------------------------------------
         # save results
         # ------------------------------------
-        util.imsave(img_E, os.path.join(E_path, f'{img_name}_1x_{args.model_name}.png'))
+        util.imsave(img_E, os.path.join(E_path, f'{img_name}_{args.scale}x_{model_name}.png'))
 
 if __name__ == '__main__':
 
