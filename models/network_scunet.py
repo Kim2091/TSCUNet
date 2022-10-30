@@ -212,14 +212,21 @@ class SCUNet(nn.Module):
                     [ConvTransBlock(dim//2, dim//2, self.head_dim, self.window_size, dpr[i+begin], 'W' if not i%2 else 'SW', input_resolution) 
                       for i in range(config[6])]
 
-        if self.scale == 2 or self.scale == 4:
+        if self.scale > 1:
+            self.m_upsample = []
+            for _ in range(int(math.log2(self.scale))):
+                self.m_upsample += [nn.Upsample(scale_factor=2, mode='nearest'), nn.Conv2d(dim, dim, 3, 1, 1)]
+            self.m_upsample += [nn.Conv2d(dim, dim, 3, 1, 1), nn.LeakyReLU(0.2, True)]
+        """
+        if self.scale > 1:
             self.m_upscale = [nn.ConvTranspose2d(dim, dim, 2, 2, 0, bias=False),] + \
                     [ConvTransBlock(dim//2, dim//2, self.head_dim, self.window_size, dpr[i+begin], 'W' if not i%2 else 'SW', input_resolution*2) 
                       for i in range(config[7])]
-        if self.scale == 4:
+        if self.scale > 2:
             self.m_upscale += [nn.ConvTranspose2d(dim, dim, 2, 2, 0, bias=False),] + \
                     [ConvTransBlock(dim//2, dim//2, self.head_dim, self.window_size, dpr[i+begin], 'W' if not i%2 else 'SW', input_resolution*4) 
                       for i in range(config[8])]
+        """
         self.m_tail = [nn.Conv2d(dim, out_nc, 3, 1, 1, bias=False)]
 
 
@@ -232,7 +239,7 @@ class SCUNet(nn.Module):
         self.m_up2 = nn.Sequential(*self.m_up2)
         self.m_up1 = nn.Sequential(*self.m_up1)
         if self.scale > 1:
-            self.m_upscale = nn.Sequential(*self.m_upscale)
+            self.m_upsample = nn.Sequential(*self.m_upsample)
         self.m_tail = nn.Sequential(*self.m_tail)  
         #self.apply(self._init_weights)
 
@@ -254,8 +261,8 @@ class SCUNet(nn.Module):
         x = x + x1
 
         if self.scale > 1:
-            x = self.m_upscale(x)
-            
+            x = self.m_upsample(x)
+        
         x = self.m_tail(x)
 
         x = x[..., :h*self.scale, :w*self.scale]
