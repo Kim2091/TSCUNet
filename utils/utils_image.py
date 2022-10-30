@@ -279,16 +279,15 @@ def single2uint16(img):
 
 # convert uint to 4-dimensional torch tensor
 def uint2tensor4(img):
-    if img.ndim == 2:
-        img = np.expand_dims(img, axis=2)
-    return torch.from_numpy(np.ascontiguousarray(img)).permute(2, 0, 1).float().div(255.).unsqueeze(0)
+    return uint2tensor3(img).unsqueeze(0)
 
 
 # convert uint to 3-dimensional torch tensor
 def uint2tensor3(img):
+    bit_depth = img.dtype.itemsize * 8
     if img.ndim == 2:
         img = np.expand_dims(img, axis=2)
-    return torch.from_numpy(np.ascontiguousarray(img)).permute(2, 0, 1).float().div(255.)
+    return torch.from_numpy(np.ascontiguousarray(img).astype(np.float)).permute(2, 0, 1).float().div(2.**bit_depth-1)
 
 
 # convert 2/3/4-dimensional torch tensor to uint
