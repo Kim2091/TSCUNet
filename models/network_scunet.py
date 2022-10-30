@@ -215,7 +215,7 @@ class SCUNet(nn.Module):
         if self.scale > 1:
             self.m_upsample = []
             for _ in range(int(math.log2(self.scale))):
-                self.m_upsample += [nn.Upsample(scale_factor=2, mode='nearest'), nn.Conv2d(dim, dim, 3, 1, 1)]
+                self.m_upsample += [nn.Upsample(scale_factor=2, mode='nearest'), nn.Conv2d(dim, dim, 3, 1, 1), nn.LeakyReLU(0.2, True)]
             self.m_upsample += [nn.Conv2d(dim, dim, 3, 1, 1), nn.LeakyReLU(0.2, True)]
         """
         if self.scale > 1:
