@@ -70,7 +70,7 @@ def main():
     # load model
     # ----------------------------------------
     from models.network_scunet import SCUNet as net
-    model = net(in_nc=n_channels,config=[4]*9,dim=64, input_resolution=256, scale=args.scale)
+    model = net(in_nc=n_channels,config=[4,4,4,4,4,4,4,2],dim=64, input_resolution=args.res, scale=args.scale)
 
     model.load_state_dict(torch.load(model_path), strict=True)
     model.eval()

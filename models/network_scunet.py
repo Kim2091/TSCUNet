@@ -123,9 +123,19 @@ class Block(nn.Module):
         x = x + self.drop_path(self.mlp(self.ln2(x)))
         return x
 
+class GaussianNoise(nn.Module):
+    def __init__(self, sigma=0.1):
+        super().__init__()
+        self.sigma = sigma
+
+    def forward(self, x):
+        if self.sigma != 0 and self.training:
+            noise = torch.randn_like(x, device=x.device, dtype=x.dtype) * self.sigma
+            x = ((noise + x).detach() - x).detach() + x
+        return x
 
 class ConvTransBlock(nn.Module):
-    def __init__(self, conv_dim, trans_dim, head_dim, window_size, drop_path, type='W', input_resolution=None):
+    def __init__(self, conv_dim, trans_dim, head_dim, window_size, drop_path, type='W', input_resolution=None, noise=True):
         """ SwinTransformer and Conv Block
         """
         super(ConvTransBlock, self).__init__()
@@ -150,6 +160,10 @@ class ConvTransBlock(nn.Module):
                 nn.ReLU(True),
                 nn.Conv2d(self.conv_dim, self.conv_dim, 3, 1, 1, bias=False)
                 )
+        
+        self.noise = nn.Identity()
+        if noise:
+            self.noise = GaussianNoise(0.05)
 
     def forward(self, x):
         conv_x, trans_x = torch.split(self.conv1_1(x), (self.conv_dim, self.trans_dim), dim=1)
@@ -158,8 +172,94 @@ class ConvTransBlock(nn.Module):
         trans_x = self.trans_block(trans_x)
         trans_x = Rearrange('b h w c -> b c h w')(trans_x)
         res = self.conv1_2(torch.cat((conv_x, trans_x), dim=1))
-        x = x + res
+        x = self.noise(x + res)
 
+        return x
+
+
+class Upconv(nn.Module):
+    def __init__(self, dim, out_dim, scale=2, blur=False):
+        super(Upconv, self).__init__()
+        self.scale = scale
+
+        self.up = []
+        for _ in range(int(math.log2(self.scale))):
+            self.up += [nn.Upsample(scale_factor=2, mode='nearest'), nn.Conv2d(dim, dim, 3, 1, 1), nn.LeakyReLU(0.2, True)]
+            if blur:
+                self.up += [nn.ReplicationPad2d((1,0,1,0)), nn.AvgPool2d(2, stride=1)]
+        self.up += [nn.Conv2d(dim, out_dim, 3, 1, 1), nn.LeakyReLU(0.2, True)]
+        self.up = nn.Sequential(*self.up)
+    
+    def forward(self, x):
+        x = self.up(x)
+        return x
+
+class ResidualDenseBlock_(nn.Module):
+    """Residual Dense Block.
+
+    Used in RRDB block in ESRGAN.
+
+    Args:
+        num_feat (int): Channel number of intermediate features.
+        num_grow_ch (int): Channels for each growth.
+    """
+
+    def __init__(self, num_feat=64, num_grow_ch=32):
+        super(ResidualDenseBlock_, self).__init__()
+        self.conv1 = nn.Conv2d(num_feat, num_grow_ch, 3, 1, 1)
+        self.conv2 = nn.Conv2d(num_feat + num_grow_ch, num_grow_ch, 3, 1, 1)
+        self.conv3 = nn.Conv2d(num_feat + 2 * num_grow_ch, num_grow_ch, 3, 1, 1)
+        self.conv4 = nn.Conv2d(num_feat + 3 * num_grow_ch, num_grow_ch, 3, 1, 1)
+        self.conv5 = nn.Conv2d(num_feat + 4 * num_grow_ch, num_feat, 3, 1, 1)
+        self.lrelu = nn.LeakyReLU(negative_slope=0.2, inplace=True)
+
+    def forward(self, x):
+        x1 = self.lrelu(self.conv1(x))
+        x2 = self.lrelu(self.conv2(torch.cat((x, x1), 1)))
+        x3 = self.lrelu(self.conv3(torch.cat((x, x1, x2), 1)))
+        x4 = self.lrelu(self.conv4(torch.cat((x, x1, x2, x3), 1)))
+        x5 = self.conv5(torch.cat((x, x1, x2, x3, x4), 1))
+        # Empirically, we use 0.2 to scale the residual for better performance
+        return x5 * 0.2 + x
+
+class RRDB_(nn.Module):
+    """Residual in Residual Dense Block.
+
+    Used in RRDB-Net in ESRGAN.
+
+    Args:
+        num_feat (int): Channel number of intermediate features.
+        num_grow_ch (int): Channels for each growth.
+    """
+
+    def __init__(self, num_feat, num_grow_ch=32):
+        super(RRDB_, self).__init__()
+        self.rdb1 = ResidualDenseBlock_(num_feat, num_grow_ch)
+        self.rdb2 = ResidualDenseBlock_(num_feat, num_grow_ch)
+        self.rdb3 = ResidualDenseBlock_(num_feat, num_grow_ch)
+
+    def forward(self, x):
+        out = self.rdb1(x)
+        out = self.rdb2(out)
+        out = self.rdb3(out)
+        # Empirically, we use 0.2 to scale the residual for better performance
+        return out * 0.2 + x
+
+class RRDBUpconv(nn.Module):
+    def __init__(self, dim, nb=2, scale=2, blur=True):
+        super(RRDBUpconv, self).__init__()
+        self.scale = scale
+
+        self.up = [RRDB_(dim, 32) for _ in range(nb)]
+        for _ in range(int(math.log2(self.scale))):
+            self.up += [nn.Upsample(scale_factor=2, mode='nearest'), nn.Conv2d(dim, dim, 3, 1, 1), nn.LeakyReLU(0.2, True)]
+            if blur:
+                self.up += [nn.ReplicationPad2d((1,0,1,0)), nn.AvgPool2d(2, stride=1)]
+        self.up += [nn.Conv2d(dim, dim, 3, 1, 1), nn.LeakyReLU(0.2, True)]
+        self.up = nn.Sequential(*self.up)
+    
+    def forward(self, x):
+        x = self.up(x)
         return x
 
 
@@ -198,35 +298,23 @@ class SCUNet(nn.Module):
                     for i in range(config[3])]
 
         begin += config[3]
-        self.m_up3 = [nn.ConvTranspose2d(8*dim, 4*dim, 2, 2, 0, bias=False),] + \
+        self.m_up3 = [Upconv(8*dim, 4*dim, 2,),] + \
                       [ConvTransBlock(2*dim, 2*dim, self.head_dim, self.window_size, dpr[i+begin], 'W' if not i%2 else 'SW',input_resolution//4)
                       for i in range(config[4])]
                       
         begin += config[4]
-        self.m_up2 = [nn.ConvTranspose2d(4*dim, 2*dim, 2, 2, 0, bias=False),] + \
+        self.m_up2 = [Upconv(4*dim, 2*dim, 2,),] + \
                       [ConvTransBlock(dim, dim, self.head_dim, self.window_size, dpr[i+begin], 'W' if not i%2 else 'SW', input_resolution//2)
                       for i in range(config[5])]
                       
         begin += config[5]
-        self.m_up1 = [nn.ConvTranspose2d(2*dim, dim, 2, 2, 0, bias=False),] + \
+        self.m_up1 = [Upconv(2*dim, dim, 2,),] + \
                     [ConvTransBlock(dim//2, dim//2, self.head_dim, self.window_size, dpr[i+begin], 'W' if not i%2 else 'SW', input_resolution) 
                       for i in range(config[6])]
 
-        if self.scale > 1:
-            self.m_upsample = []
-            for _ in range(int(math.log2(self.scale))):
-                self.m_upsample += [nn.Upsample(scale_factor=2, mode='nearest'), nn.Conv2d(dim, dim, 3, 1, 1), nn.LeakyReLU(0.2, True)]
-            self.m_upsample += [nn.Conv2d(dim, dim, 3, 1, 1), nn.LeakyReLU(0.2, True)]
-        """
-        if self.scale > 1:
-            self.m_upscale = [nn.ConvTranspose2d(dim, dim, 2, 2, 0, bias=False),] + \
-                    [ConvTransBlock(dim//2, dim//2, self.head_dim, self.window_size, dpr[i+begin], 'W' if not i%2 else 'SW', input_resolution*2) 
-                      for i in range(config[7])]
-        if self.scale > 2:
-            self.m_upscale += [nn.ConvTranspose2d(dim, dim, 2, 2, 0, bias=False),] + \
-                    [ConvTransBlock(dim//2, dim//2, self.head_dim, self.window_size, dpr[i+begin], 'W' if not i%2 else 'SW', input_resolution*4) 
-                      for i in range(config[8])]
-        """
+        self.m_upsample = [RRDBUpconv(dim, nb=config[7], scale=self.scale)]
+
+
         self.m_tail = [nn.Conv2d(dim, out_nc, 3, 1, 1, bias=False)]
 
 
@@ -238,17 +326,23 @@ class SCUNet(nn.Module):
         self.m_up3 = nn.Sequential(*self.m_up3)
         self.m_up2 = nn.Sequential(*self.m_up2)
         self.m_up1 = nn.Sequential(*self.m_up1)
-        if self.scale > 1:
-            self.m_upsample = nn.Sequential(*self.m_upsample)
+        self.m_upsample = nn.Sequential(*self.m_upsample)
         self.m_tail = nn.Sequential(*self.m_tail)  
         #self.apply(self._init_weights)
 
     def forward(self, x0):
 
         h, w = x0.size()[-2:]
+        paddingLeft = 0
+        paddingTop = 0
         paddingBottom = int(np.ceil(h/64)*64-h)
         paddingRight = int(np.ceil(w/64)*64-w)
-        x0 = nn.ReplicationPad2d((0, paddingRight, 0, paddingBottom))(x0)
+        if not self.training:
+            paddingLeft += 64
+            paddingTop += 64
+            paddingBottom += 64
+            paddingRight += 64
+        x0 = nn.ReplicationPad2d((paddingLeft, paddingRight, paddingTop, paddingBottom))(x0)
 
         x1 = self.m_head(x0)
         x2 = self.m_down1(x1)
@@ -258,14 +352,11 @@ class SCUNet(nn.Module):
         x = self.m_up3(x+x4)
         x = self.m_up2(x+x3)
         x = self.m_up1(x+x2)
-        x = x + x1
 
-        if self.scale > 1:
-            x = self.m_upsample(x)
-        
+        x = self.m_upsample(x+x1)
         x = self.m_tail(x)
 
-        x = x[..., :h*self.scale, :w*self.scale]
+        x = x[..., paddingTop*self.scale:paddingTop*self.scale+h*self.scale, paddingLeft*self.scale:paddingLeft*self.scale+w*self.scale]
         
         return x
 
