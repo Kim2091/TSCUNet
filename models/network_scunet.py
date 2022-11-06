@@ -245,9 +245,9 @@ class RRDB_(nn.Module):
         # Empirically, we use 0.2 to scale the residual for better performance
         return out * 0.2 + x
 
-class RRDBUpconv(nn.Module):
-    def __init__(self, dim, nb=2, scale=2, blur=True):
-        super(RRDBUpconv, self).__init__()
+class RRDBUpsample(nn.Module):
+    def __init__(self, dim, nb=2, scale=2, blur=False):
+        super(RRDBUpsample, self).__init__()
         self.scale = scale
 
         self.up = [RRDB_(dim, 32) for _ in range(nb)]
@@ -312,8 +312,18 @@ class SCUNet(nn.Module):
                     [ConvTransBlock(dim//2, dim//2, self.head_dim, self.window_size, dpr[i+begin], 'W' if not i%2 else 'SW', input_resolution) 
                       for i in range(config[6])]
 
-        self.m_upsample = [RRDBUpconv(dim, nb=config[7], scale=self.scale)]
-
+        #if self.scale > 1:
+            #self.m_upsample = [Upsample(dim, self.scale)]
+        self.m_upsample = [RRDBUpsample(dim, nb=config[7], scale=self.scale)]
+            #self.m_upsample = [DualUpsample(dim, self.scale)]
+        """
+        if self.scale > 2:
+            begin += config[7]
+            self.m_upsample2 += [nn.ConvTranspose2d(dim, dim, 2, 2, 0, bias=False),] + \
+                    [ConvTransBlock(dim//2, dim//2, self.head_dim, self.window_size, dpr[i+begin], 'W' if not i%2 else 'SW', input_resolution*4) 
+                      for i in range(config[8])]
+            self.m_upsample2 = nn.Sequential(*self.m_upsample2)
+        """
 
         self.m_tail = [nn.Conv2d(dim, out_nc, 3, 1, 1, bias=False)]
 
@@ -338,10 +348,10 @@ class SCUNet(nn.Module):
         paddingBottom = int(np.ceil(h/64)*64-h)
         paddingRight = int(np.ceil(w/64)*64-w)
         if not self.training:
-            paddingLeft += 64
-            paddingTop += 64
-            paddingBottom += 64
-            paddingRight += 64
+            paddingLeft += 32
+            paddingTop += 32
+            paddingBottom += 32
+            paddingRight += 32
         x0 = nn.ReplicationPad2d((paddingLeft, paddingRight, paddingTop, paddingBottom))(x0)
 
         x1 = self.m_head(x0)

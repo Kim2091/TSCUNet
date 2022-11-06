@@ -35,6 +35,7 @@ def main():
     parser.add_argument('--depth', type=int, default=8, help='bit depth of outputs')
     parser.add_argument('--scale', type=int, default=1, help='model scale')
     parser.add_argument('--res', type=int, default=96, help='input_resolution')
+    parser.add_argument('--nb', type=int, default=4, help='number of blocks per layer')
 
     args = parser.parse_args()
 
@@ -70,7 +71,7 @@ def main():
     # load model
     # ----------------------------------------
     from models.network_scunet import SCUNet as net
-    model = net(in_nc=n_channels,config=[4,4,4,4,4,4,4,2],dim=64, input_resolution=args.res, scale=args.scale)
+    model = net(in_nc=n_channels,config=([args.nb]*7 +[2]),dim=64, input_resolution=args.res, scale=args.scale)
 
     model.load_state_dict(torch.load(model_path), strict=True)
     model.eval()
@@ -89,8 +90,8 @@ def main():
     num_parameters = sum(map(lambda x: x.numel(), model.parameters()))
     logger.info('{:>16s} : {:<.4f} [M]'.format('#Params', num_parameters/10**6))
 
+    total_time = 0
     for idx, img in enumerate(L_paths):
-
         # ------------------------------------
         # (1) img_L
         # ------------------------------------
@@ -108,15 +109,24 @@ def main():
         # (2) img_E
         # ------------------------------------
 
-        #img_E = utils_model.test_mode(model, img_L, refield=64, min_size=512, mode=2)
+        start = torch.cuda.Event(enable_timing=True)
+        end = torch.cuda.Event(enable_timing=True)
 
+        start.record()
         img_E, _ = util.tiled_forward(model, img_L, overlap=256, scale=args.scale)
+        end.record()
+        torch.cuda.synchronize()
+        time_taken = start.elapsed_time(end)
+        total_time += time_taken
+
         img_E = util.tensor2uint(img_E, args.depth)
 
         # ------------------------------------
         # save results
         # ------------------------------------
         util.imsave(img_E, os.path.join(E_path, f'{img_name}_{args.scale}x_{model_name}.png'))
+        print(f'{idx + 1}/{len(L_paths)} in {time_taken:.2f}ms, time remaining: {(total_time / (idx+1)) * (len(L_paths) - (idx+1)):.2f}ms', end='\r')
+    print(f'\nProcessed {len(L_paths)} images in {total_time:.2f}ms, average {total_time / len(L_paths):.2f}ms per image')
 
 if __name__ == '__main__':
 
