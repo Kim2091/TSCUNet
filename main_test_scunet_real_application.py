@@ -33,9 +33,6 @@ def main():
     parser.add_argument('--input', type=str, default='input', help='path of inputs')
     parser.add_argument('--output', type=str, default='output', help='path of results')
     parser.add_argument('--depth', type=int, default=8, help='bit depth of outputs')
-    parser.add_argument('--scale', type=int, default=1, help='model scale')
-    parser.add_argument('--res', type=int, default=96, help='input_resolution')
-    parser.add_argument('--nb', type=int, default=4, help='number of blocks per layer')
     parser.add_argument('--suffix', type=str, default=None, help='output filename suffix')
 
     args = parser.parse_args()
@@ -61,6 +58,10 @@ def main():
     L_path = args.input   # L_path, for Low-quality images
     E_path = args.output  # E_path, for Estimated images
 
+    if not L_path or not os.path.exists(L_path):
+        print('Error: input path does not exist.')
+        return
+
     if not os.path.isdir(E_path) and os.path.isdir(L_path):
         E_path = os.path.dirname(E_path)
     if os.path.isdir(E_path) and not os.path.exists(E_path):
@@ -76,10 +77,10 @@ def main():
     # load model
     # ----------------------------------------
     from models.network_scunet import SCUNet as net
-    model = net(in_nc=n_channels,config=([args.nb]*7+[max(1,args.nb//2)]),dim=64, input_resolution=args.res, scale=args.scale)
-
-    model.load_state_dict(torch.load(model_path), strict=True)
+    model = net(state_dict=torch.load(model_path))
     model.eval()
+    scale = model.scale
+
     for k, v in model.named_parameters():
         v.requires_grad = False
     model = model.to(device)
@@ -90,6 +91,7 @@ def main():
 
     logger.info('model_name:{}'.format(model_name))
     logger.info(L_path)
+
     if os.path.isdir(L_path):
         L_paths = util.get_image_paths(L_path)
     else:
@@ -99,9 +101,9 @@ def main():
     logger.info('{:>16s} : {:<.4f} [M]'.format('#Params', num_parameters/10**6))
 
     if args.suffix:
-        suffix = args.suffix
+        suffix = f"{scale}x_{args.suffix}"
     else:
-        suffix = f"_{model_name}" if f"{args.scale}x_" in model_name else f"{args.scale}x_{model_name}"
+        suffix = f"{model_name}" if f"{scale}x_" in model_name else f"{scale}x_{model_name}"
 
     total_time = 0
     for idx, img in enumerate(L_paths):
@@ -126,11 +128,12 @@ def main():
         end = torch.cuda.Event(enable_timing=True)
 
         start.record()
-        img_E, _ = util.tiled_forward(model, img_L, overlap=256, scale=args.scale)
+        img_E, _ = util.tiled_forward(model, img_L, overlap=256, scale=scale)
         end.record()
         torch.cuda.synchronize()
         time_taken = start.elapsed_time(end)
-        total_time += time_taken
+        if idx > 0:
+            total_time += time_taken
 
         img_E = util.tensor2uint(img_E, args.depth)
 

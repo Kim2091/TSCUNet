@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import math
+import re
 import torch
 import torch.nn as nn
 import numpy as np
@@ -265,8 +266,28 @@ class RRDBUpsample(nn.Module):
 
 class SCUNet(nn.Module):
 
-    def __init__(self, in_nc=3, out_nc=3, config=[2,2,2,2,2,2,2], dim=64, drop_path_rate=0.0, input_resolution=256, scale=1):
+    def __init__(self, in_nc=3, out_nc=3, config=[2,2,2,2,2,2,2], dim=64, drop_path_rate=0.0, input_resolution=256, scale=1, state_dict=None):
         super(SCUNet, self).__init__()
+
+        if state_dict:
+            in_nc =  state_dict['m_head.0.weight'].shape[1]
+            dim =    state_dict['m_head.0.weight'].shape[0]
+            out_nc = state_dict['m_tail.0.weight'].shape[0]
+
+            scale = 2 ** (len([k for k in state_dict.keys() if re.match(re.compile('m_upsample\.0\.up\.[0-9]+\.weight'), k)])-1)
+
+            # TODO: obtain this parameter without assuming
+            input_resolution = 64 if scale > 1 else 256 
+
+            config = []
+            for i in range(1,4):
+                config.append(len([k for k in state_dict.keys() if re.match(re.compile(f'm_down{i}\..\.trans_block\.mlp\.0\.weight'), k)]))
+            config.append(len([k for k in state_dict.keys() if re.match(re.compile('m_body\..\.trans_block\.mlp\.0\.weight'), k)]))
+            for i in range(1,4):
+                config.append(len([k for k in state_dict.keys() if re.match(re.compile(f'm_up{i}\..\.trans_block\.mlp\.0\.weight'), k)]))
+            config.append(len([k for k in state_dict.keys() if re.match(re.compile('m_upsample\.0\.up\.[0-9]+\.rdb1\.conv1\.weight'), k)]))
+
+        
         self.config = config
         self.dim = dim
         self.head_dim = 32
@@ -312,18 +333,7 @@ class SCUNet(nn.Module):
                     [ConvTransBlock(dim//2, dim//2, self.head_dim, self.window_size, dpr[i+begin], 'W' if not i%2 else 'SW', input_resolution) 
                       for i in range(config[6])]
 
-        #if self.scale > 1:
-            #self.m_upsample = [Upsample(dim, self.scale)]
         self.m_upsample = [RRDBUpsample(dim, nb=config[7], scale=self.scale)]
-            #self.m_upsample = [DualUpsample(dim, self.scale)]
-        """
-        if self.scale > 2:
-            begin += config[7]
-            self.m_upsample2 += [nn.ConvTranspose2d(dim, dim, 2, 2, 0, bias=False),] + \
-                    [ConvTransBlock(dim//2, dim//2, self.head_dim, self.window_size, dpr[i+begin], 'W' if not i%2 else 'SW', input_resolution*4) 
-                      for i in range(config[8])]
-            self.m_upsample2 = nn.Sequential(*self.m_upsample2)
-        """
 
         self.m_tail = [nn.Conv2d(dim, out_nc, 3, 1, 1, bias=False)]
 
@@ -337,7 +347,10 @@ class SCUNet(nn.Module):
         self.m_up2 = nn.Sequential(*self.m_up2)
         self.m_up1 = nn.Sequential(*self.m_up1)
         self.m_upsample = nn.Sequential(*self.m_upsample)
-        self.m_tail = nn.Sequential(*self.m_tail)  
+        self.m_tail = nn.Sequential(*self.m_tail)
+
+        if state_dict:
+            self.load_state_dict(state_dict, strict=True)
         #self.apply(self._init_weights)
 
     def forward(self, x0):
