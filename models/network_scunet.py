@@ -266,26 +266,26 @@ class RRDBUpsample(nn.Module):
 
 class SCUNet(nn.Module):
 
-    def __init__(self, in_nc=3, out_nc=3, config=[2,2,2,2,2,2,2], dim=64, drop_path_rate=0.0, input_resolution=256, scale=1, state_dict=None):
+    def __init__(self, in_nc=3, out_nc=3, config=[2,2,2,2,2,2,2], dim=64, drop_path_rate=0.0, input_resolution=256, scale=1, state=None):
         super(SCUNet, self).__init__()
 
-        if state_dict:
-            in_nc =  state_dict['m_head.0.weight'].shape[1]
-            dim =    state_dict['m_head.0.weight'].shape[0]
-            out_nc = state_dict['m_tail.0.weight'].shape[0]
+        if state:
+            in_nc =  state['m_head.0.weight'].shape[1]
+            dim =    state['m_head.0.weight'].shape[0]
+            out_nc = state['m_tail.0.weight'].shape[0]
 
-            scale = 2 ** (len([k for k in state_dict.keys() if re.match(re.compile('m_upsample\.0\.up\.[0-9]+\.weight'), k)])-1)
+            scale = 2 ** (len([k for k in state.keys() if re.match(re.compile('m_upsample\.0\.up\.[0-9]+\.weight'), k)])-1)
 
             # TODO: obtain this parameter without assuming
             input_resolution = 64 if scale > 1 else 256 
 
             config = []
             for i in range(1,4):
-                config.append(len([k for k in state_dict.keys() if re.match(re.compile(f'm_down{i}\..\.trans_block\.mlp\.0\.weight'), k)]))
-            config.append(len([k for k in state_dict.keys() if re.match(re.compile('m_body\..\.trans_block\.mlp\.0\.weight'), k)]))
+                config.append(len([k for k in state.keys() if re.match(re.compile(f'm_down{i}\..\.trans_block\.mlp\.0\.weight'), k)]))
+            config.append(len([k for k in state.keys() if re.match(re.compile('m_body\..\.trans_block\.mlp\.0\.weight'), k)]))
             for i in range(1,4):
-                config.append(len([k for k in state_dict.keys() if re.match(re.compile(f'm_up{i}\..\.trans_block\.mlp\.0\.weight'), k)]))
-            config.append(len([k for k in state_dict.keys() if re.match(re.compile('m_upsample\.0\.up\.[0-9]+\.rdb1\.conv1\.weight'), k)]))
+                config.append(len([k for k in state.keys() if re.match(re.compile(f'm_up{i}\..\.trans_block\.mlp\.0\.weight'), k)]))
+            config.append(len([k for k in state.keys() if re.match(re.compile('m_upsample\.0\.up\.[0-9]+\.rdb1\.conv1\.weight'), k)]))
 
         
         self.config = config
@@ -346,11 +346,14 @@ class SCUNet(nn.Module):
         self.m_up3 = nn.Sequential(*self.m_up3)
         self.m_up2 = nn.Sequential(*self.m_up2)
         self.m_up1 = nn.Sequential(*self.m_up1)
-        self.m_upsample = nn.Sequential(*self.m_upsample)
+
+        if scale > 1:
+            self.m_upsample = nn.Sequential(*self.m_upsample)
+
         self.m_tail = nn.Sequential(*self.m_tail)
 
-        if state_dict:
-            self.load_state_dict(state_dict, strict=True)
+        if state:
+            self.load_state_dict(state, strict=True)
         #self.apply(self._init_weights)
 
     def forward(self, x0):
@@ -376,7 +379,9 @@ class SCUNet(nn.Module):
         x = self.m_up2(x+x3)
         x = self.m_up1(x+x2)
 
-        x = self.m_upsample(x+x1)
+        x = x + x1
+        if self.scale > 1:
+            x = self.m_upsample(x)
         x = self.m_tail(x)
 
         x = x[..., paddingTop*self.scale:paddingTop*self.scale+h*self.scale, paddingLeft*self.scale:paddingLeft*self.scale+w*self.scale]
