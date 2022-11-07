@@ -60,7 +60,11 @@ def main():
     # ----------------------------------------
     L_path = args.input   # L_path, for Low-quality images
     E_path = args.output  # E_path, for Estimated images
-    util.mkdir(E_path)
+
+    if not os.path.isdir(E_path) and os.path.isdir(L_path):
+        E_path = os.path.dirname(E_path)
+    if os.path.isdir(E_path) and not os.path.exists(E_path):
+        util.mkdir(E_path)
 
     logger_name = result_name
     #utils_logger.logger_info(logger_name, log_path=os.path.join(E_path, logger_name+'.log'))
@@ -86,7 +90,10 @@ def main():
 
     logger.info('model_name:{}'.format(model_name))
     logger.info(L_path)
-    L_paths = util.get_image_paths(L_path)
+    if os.path.isdir(L_path):
+        L_paths = util.get_image_paths(L_path)
+    else:
+        L_paths = [L_path]
 
     num_parameters = sum(map(lambda x: x.numel(), model.parameters()))
     logger.info('{:>16s} : {:<.4f} [M]'.format('#Params', num_parameters/10**6))
@@ -130,7 +137,10 @@ def main():
         # ------------------------------------
         # save results
         # ------------------------------------
-        util.imsave(img_E, os.path.join(E_path, f'{img_name}_{suffix}.png'))
+        if os.path.isdir(E_path):
+            util.imsave(img_E, os.path.join(E_path, f'{img_name}_{suffix}.png'))
+        else:
+            util.imsave(img_E, E_path)
         print(f'{idx + 1}/{len(L_paths)} in {time_taken:.2f}ms, time remaining: {(total_time / (idx+1)) * (len(L_paths) - (idx+1)):.2f}ms', end='\r')
     print(f'\nProcessed {len(L_paths)} images in {total_time:.2f}ms, average {total_time / len(L_paths):.2f}ms per image')
 
