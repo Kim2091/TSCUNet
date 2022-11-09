@@ -164,3 +164,7 @@ cython_debug/
 model_zoo/*
 results/
 testsets/
+
+
+# VSCode
+.vscode
