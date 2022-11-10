@@ -179,7 +179,7 @@ class ConvTransBlock(nn.Module):
 
 
 class Upconv(nn.Module):
-    def __init__(self, dim, out_dim, scale=2, blur=False):
+    def __init__(self, dim, out_dim, scale=2, a=0, b=0, bias=False, blur=False):
         super(Upconv, self).__init__()
         self.scale = scale
 
@@ -274,7 +274,7 @@ class SCUNet(nn.Module):
             dim =    state['m_head.0.weight'].shape[0]
             out_nc = state['m_tail.0.weight'].shape[0]
 
-            scale = 2 ** (len([k for k in state.keys() if re.match(re.compile('m_upsample\.0\.up\.[0-9]+\.weight'), k)])-1)
+            scale = 2 ** max(0, len([k for k in state.keys() if re.match(re.compile('m_upsample\.0\.up\.[0-9]+\.weight'), k)])-1)
 
             # TODO: obtain this parameter without assuming
             input_resolution = 64 if scale > 1 else 256 
@@ -299,6 +299,8 @@ class SCUNet(nn.Module):
 
         self.m_head = [nn.Conv2d(in_nc, dim, 3, 1, 1, bias=False)]
 
+        unet_up = Upconv if scale > 1 else nn.ConvTranspose2d
+
         begin = 0
         self.m_down1 = [ConvTransBlock(dim//2, dim//2, self.head_dim, self.window_size, dpr[i+begin], 'W' if not i%2 else 'SW', input_resolution) 
                       for i in range(config[0])] + \
@@ -319,21 +321,22 @@ class SCUNet(nn.Module):
                     for i in range(config[3])]
 
         begin += config[3]
-        self.m_up3 = [Upconv(8*dim, 4*dim, 2,),] + \
+        self.m_up3 = [unet_up(8*dim, 4*dim, 2, 2, bias=False),] + \
                       [ConvTransBlock(2*dim, 2*dim, self.head_dim, self.window_size, dpr[i+begin], 'W' if not i%2 else 'SW',input_resolution//4)
                       for i in range(config[4])]
                       
         begin += config[4]
-        self.m_up2 = [Upconv(4*dim, 2*dim, 2,),] + \
+        self.m_up2 = [unet_up(4*dim, 2*dim, 2, 2, bias=False),] + \
                       [ConvTransBlock(dim, dim, self.head_dim, self.window_size, dpr[i+begin], 'W' if not i%2 else 'SW', input_resolution//2)
                       for i in range(config[5])]
                       
         begin += config[5]
-        self.m_up1 = [Upconv(2*dim, dim, 2,),] + \
+        self.m_up1 = [unet_up(2*dim, dim, 2, 2, bias=False),] + \
                     [ConvTransBlock(dim//2, dim//2, self.head_dim, self.window_size, dpr[i+begin], 'W' if not i%2 else 'SW', input_resolution) 
                       for i in range(config[6])]
 
-        self.m_upsample = [RRDBUpsample(dim, nb=config[7], scale=self.scale)]
+        if self.scale > 1:
+            self.m_upsample = [RRDBUpsample(dim, nb=config[7], scale=self.scale)]
 
         self.m_tail = [nn.Conv2d(dim, out_nc, 3, 1, 1, bias=False)]
 

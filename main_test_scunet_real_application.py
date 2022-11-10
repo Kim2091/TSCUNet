@@ -23,6 +23,13 @@ from utils import utils_image as util
 by Kai Zhang (2021/05-2021/11)
 '''
 
+def get_frame(container):
+    try:
+        for frame in container.decode(video=0):
+            return frame.to_ndarray(format='rgb24')
+    except:
+        return None
+
 
 def main():
 
@@ -118,24 +125,12 @@ def main():
     else:
         suffix = f"{model_name}" if f"{scale}x_" in model_name else f"{scale}x_{model_name}"
 
-    #input_width = 720
-    #input_height = 540
     if video_input:
-        input_container = av.open(L_path, )#options={'filter:v': 'yadif', 'r': '24000/1001'})
+        input_container = av.open(L_path)#options={'filter:v': 'yadif', 'r': '24000/1001'})
         input_stream = input_container.streams.video[0]
         input_stream.thread_type = 'AUTO'
         # approximate number of frames with a couple seconds of headroom
         img_count = int((input_container.duration/1000000 + 10)*23.976)
-
-        """
-        input_width = input_stream.width
-        input_height = input_stream.height
-
-        if input_stream.display_aspect_ratio and round(float(input_stream.display_aspect_ratio),2) != round(input_stream.width / input_stream.height, 2):
-            input_width = math.sqrt(float(input_stream.display_aspect_ratio) * input_stream.width * input_stream.height)
-            input_height = int(2*round(input_width / float(input_stream.display_aspect_ratio) / 2))
-            input_width = int(2*round(input_width / 2))
-        """
     else:
         img_count = len(L_paths)
 
@@ -175,24 +170,20 @@ def main():
             # (1) img_L
             # ------------------------------------
             if video_input:
-                for frame in input_container.decode(video=0):
-                    if frame is None:
-                        img_L = None
-                        img_count = idx
-                        break
-                    img_L = frame.to_ndarray(format='rgb24')
-                    img_L = cv2.resize(img_L, (int(args.video_res.split(':')[0])//scale, int(args.video_res.split(':')[1])//scale), interpolation=cv2.INTER_CUBIC)
-                    break
+                img_L = get_frame(input_container)
+            elif len(L_paths) == 0:
+                img_L = None
             else:
-                img = L_paths[img_count]
-                img_name, ext = os.path.splitext(os.path.basename(img))
-                logger.info('{:->4d}--> {:>10s}'.format(idx+1, img_name+ext))
-
-                img_L = util.imread_uint(img, n_channels=n_channels)
+                img_L = L_paths.pop(0)
+                img_name, ext = os.path.splitext(os.path.basename(img_L))
+                img_L = util.imread_uint(img_L, n_channels=n_channels)
+                
             if img_L is None:
+                img_count = idx
                 break
 
-            util.imshow(img_L) if args.show_img else None
+            if args.video:
+                img_L = cv2.resize(img_L, (int(args.video_res.split(':')[0])//scale, int(args.video_res.split(':')[1])//scale), interpolation=cv2.INTER_CUBIC)
 
             img_L = util.uint2tensor4(img_L)
             img_L = img_L.to(device)
@@ -201,8 +192,11 @@ def main():
             # (2) img_E
             # ------------------------------------
             
+            rng_state = torch.get_rng_state()
+            torch.manual_seed(13)
             img_E, _ = util.tiled_forward(model, img_L, overlap=256, scale=scale)
             img_E = util.tensor2uint(img_E, args.depth)
+            torch.set_rng_state(rng_state)
 
             # ------------------------------------
             # save results
@@ -221,12 +215,11 @@ def main():
             total_time += time_taken
             time_remaining = ((total_time / (idx+1)) * (img_count - (idx+1)))/1000
 
-            print(f'fps: {1000/time_taken:.2f}     {idx + 1}/{img_count} in {time_taken:2f}ms     time remaining: {math.trunc(time_remaining/3600)}h{math.trunc((time_remaining/60)%60)}m{math.trunc(time_remaining%60)}s        ', end='\r')
+            print(f'{idx + 1}/{img_count}   fps: {1000/time_taken:.2f}  frame time: {time_taken:2f}ms   time remaining: {math.trunc(time_remaining/3600)}h{math.trunc((time_remaining/60)%60)}m{math.trunc(time_remaining%60)}s ', end='\r')
     except KeyboardInterrupt:
-        print("\nCaught KeyboardInterrupt, ending gracefully             ")
+        print("\nCaught KeyboardInterrupt, ending gracefully                    ")
     except av.error.EOFError:
-        print("\nEnd of video reached                        ")
-    print("\n")
+        print("\nEnd of video reached                   ")
 
     if video_input:
         input_container.close()
@@ -234,9 +227,9 @@ def main():
         for packet in stream.encode():
             output_container.mux(packet)
         output_container.close()
-        print("Saved video to", E_path)
+        print(f"Saved video to {E_path}             ")
 
-    print(f'Processed {idx} images in {timedelta(milliseconds=total_time)}, average {total_time / idx:.2f}ms per image')
+    print(f'Processed {idx} images in {timedelta(milliseconds=total_time)}, average {total_time / idx:.2f}ms per image              ')
 
 if __name__ == '__main__':
 
