@@ -91,7 +91,7 @@ def main():
 
     if not args.video and not os.path.isdir(E_path) and os.path.isdir(L_path):
         E_path = os.path.dirname(E_path)
-    if os.path.isdir(E_path) and not os.path.exists(E_path):
+    if not os.path.exists(E_path) and os.path.splitext(E_path)[1] == '':
         util.mkdir(E_path)
 
     logger_name = result_name
