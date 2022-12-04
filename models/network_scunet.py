@@ -266,7 +266,7 @@ class RRDBUpsample(nn.Module):
 
 class SCUNet(nn.Module):
 
-    def __init__(self, in_nc=3, out_nc=3, config=[2,2,2,2,2,2,2], dim=64, drop_path_rate=0.0, input_resolution=256, scale=1, state=None):
+    def __init__(self, in_nc=3, out_nc=3, config=[2,2,2,2,2,2,2], dim=64, drop_path_rate=0.0, input_resolution=256, scale=1, residual=False, state=None):
         super(SCUNet, self).__init__()
 
         if state:
@@ -278,6 +278,7 @@ class SCUNet(nn.Module):
 
             # TODO: obtain this parameter without assuming
             input_resolution = 64 if scale > 1 else 256 
+            residual = "m_res.0.weight" in state.keys()
 
             config = []
             for i in range(1,4):
@@ -293,14 +294,15 @@ class SCUNet(nn.Module):
         self.head_dim = 32
         self.window_size = 8
         self.scale = scale
+        self.residual = residual
+
+        unet_up = Upconv if scale > 1 else nn.ConvTranspose2d
 
         # drop path rate for each layer
         dpr = [x.item() for x in torch.linspace(0, drop_path_rate, sum(config))]
 
         self.m_head = [nn.Conv2d(in_nc, dim, 3, 1, 1, bias=False)]
-
-        unet_up = Upconv if scale > 1 else nn.ConvTranspose2d
-
+        
         begin = 0
         self.m_down1 = [ConvTransBlock(dim//2, dim//2, self.head_dim, self.window_size, dpr[i+begin], 'W' if not i%2 else 'SW', input_resolution) 
                       for i in range(config[0])] + \
@@ -335,6 +337,8 @@ class SCUNet(nn.Module):
                     [ConvTransBlock(dim//2, dim//2, self.head_dim, self.window_size, dpr[i+begin], 'W' if not i%2 else 'SW', input_resolution) 
                       for i in range(config[6])]
 
+        if self.residual:
+            self.m_res = [nn.Conv2d(dim, dim, 3, 1, 1, bias=False)]
         if self.scale > 1:
             self.m_upsample = [RRDBUpsample(dim, nb=config[7], scale=self.scale)]
 
@@ -350,6 +354,8 @@ class SCUNet(nn.Module):
         self.m_up2 = nn.Sequential(*self.m_up2)
         self.m_up1 = nn.Sequential(*self.m_up1)
 
+        if self.residual:
+            self.m_res = nn.Sequential(*self.m_res)
         if scale > 1:
             self.m_upsample = nn.Sequential(*self.m_upsample)
 
@@ -367,10 +373,10 @@ class SCUNet(nn.Module):
         paddingBottom = int(np.ceil(h/64)*64-h)
         paddingRight = int(np.ceil(w/64)*64-w)
         if not self.training:
-            paddingLeft += 32
-            paddingTop += 32
-            paddingBottom += 32
-            paddingRight += 32
+            paddingLeft += 64
+            paddingTop += 64
+            paddingBottom += 64
+            paddingRight += 64
         x0 = nn.ReplicationPad2d((paddingLeft, paddingRight, paddingTop, paddingBottom))(x0)
 
         x1 = self.m_head(x0)
@@ -381,6 +387,9 @@ class SCUNet(nn.Module):
         x = self.m_up3(x+x4)
         x = self.m_up2(x+x3)
         x = self.m_up1(x+x2)
+
+        if self.residual:
+            x1 = self.m_res(x1)
 
         x = x + x1
         if self.scale > 1:

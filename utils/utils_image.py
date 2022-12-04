@@ -1096,6 +1096,54 @@ def join_tiles(tiles: tuple[torch.Tensor, ...], overlap: int) -> torch.Tensor:
     return joined_tile
 
 
+# https://github.com/chaiNNer-org/chaiNNer/blob/main/backend/src/nodes/nodes/image_filter/avg_color_fix.py
+# https://github.com/chaiNNer-org/chaiNNer
+
+def avg_color_fix(input_img: np.ndarray, ref_img: np.ndarray, scale_factor: float) -> np.ndarray:
+    if scale_factor < 1.0:
+        # Make sure reference image dims are not resized to 0
+        h, w, _ = ref_img.shape
+        out_dims = (
+            max(math.ceil(w * scale_factor), 1),
+            max(math.ceil(h * scale_factor), 1),
+        )
+
+        ref_img = cv2.resize(
+            ref_img,
+            out_dims,
+            interpolation=cv2.INTER_AREA,
+        )
+
+    input_h, input_w, _ = input_img.shape
+    ref_h, ref_w, _ = ref_img.shape
+
+    assert (
+        ref_w < input_w and ref_h < input_h
+    ), "Image must be larger than Reference Image"
+
+    # Find the diff of both images
+
+    # Downscale the input image
+    downscaled_input = cv2.resize(
+        input_img,
+        (ref_w, ref_h),
+        interpolation=cv2.INTER_AREA,
+    )
+
+    # Get difference between the reference image and downscaled input
+    downscaled_diff = (ref_img / (2**(ref_img.dtype.itemsize*8) - 1)) - (downscaled_input / (2**(downscaled_input.dtype.itemsize*8) - 1))
+
+    # Upsample the difference
+    diff = cv2.resize(
+        downscaled_diff,
+        (input_w, input_h),
+        interpolation=cv2.INTER_CUBIC,
+    )
+
+    result = input_img + (diff * (2**(input_img.dtype.itemsize*8) - 1)) 
+
+    return np.clip(result, 0, 2**(input_img.dtype.itemsize*8) - 1).astype(input_img.dtype)
+
 
 if __name__ == '__main__':
     img = imread_uint('test.bmp', 3)

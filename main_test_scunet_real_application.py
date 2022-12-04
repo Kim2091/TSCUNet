@@ -47,6 +47,8 @@ def main():
     parser.add_argument('--suffix', type=str, default=None, help='output filename suffix')
     parser.add_argument('--video', type=str, default=None, help='video output codec. if not None, output video instead of images')
     parser.add_argument('--video_res', type=str, default='1440:1080', help='video resolution to scale output to')
+    parser.add_argument('--video_presize', action='store_true', help='resize video to video_res/scale before processing')
+    parser.add_argument('--avg_color_fix_scale', type=float, default=0.0, help='fix average color of output to match input')
 
     args = parser.parse_args()
 
@@ -126,7 +128,7 @@ def main():
         suffix = f"{model_name}" if f"{scale}x_" in model_name else f"{scale}x_{model_name}"
 
     if video_input:
-        input_container = av.open(L_path)#options={'filter:v': 'yadif', 'r': '24000/1001'})
+        input_container = av.open(L_path, options={'filter:v': 'yadif', 'r': '24000/1001'})
         input_stream = input_container.streams.video[0]
         input_stream.thread_type = 'AUTO'
         # approximate number of frames with a couple seconds of headroom
@@ -182,11 +184,11 @@ def main():
                 img_count = idx
                 break
 
-            if args.video:
+            if args.video and args.video_presize:
                 img_L = cv2.resize(img_L, (int(args.video_res.split(':')[0])//scale, int(args.video_res.split(':')[1])//scale), interpolation=cv2.INTER_CUBIC)
-
-            img_L = util.uint2tensor4(img_L)
-            img_L = img_L.to(device)
+            
+            img_L_t = util.uint2tensor4(img_L)
+            img_L_t = img_L_t.to(device)
 
             # ------------------------------------
             # (2) img_E
@@ -194,13 +196,25 @@ def main():
             
             rng_state = torch.get_rng_state()
             torch.manual_seed(13)
-            img_E, _ = util.tiled_forward(model, img_L, overlap=256, scale=scale)
+            img_E, _ = util.tiled_forward(model, img_L_t, overlap=256, scale=scale)
             img_E = util.tensor2uint(img_E, args.depth)
             torch.set_rng_state(rng_state)
 
             # ------------------------------------
             # save results
             # ------------------------------------
+            if args.video:
+                img_E = cv2.resize(img_E, (int(args.video_res.split(':')[0]), int(args.video_res.split(':')[1])), interpolation=cv2.INTER_CUBIC)
+            if args.avg_color_fix_scale > 0.01:
+                img_E = util.avg_color_fix(img_E, img_L, args.avg_color_fix_scale)
+            """
+            if args.avg_color_fix_scale > 0.01:
+                img_L_t = util.uint2tensor4(cv2.resize(img_L, ((int)(img_L.shape[1] * (args.avg_color_fix_scale / scale)), (int)(img_L.shape[0] * (args.avg_color_fix_scale / scale))), interpolation=cv2.INTER_CUBIC)).to(device)
+                img_L_t, _ = util.tiled_forward(model, img_L_t, overlap=256, scale=scale)
+                img_L = util.tensor2uint(img_L_t, args.depth)
+                img_E = util.avg_color_fix(img_E, img_L, 1.0)
+            """
+            
             if args.video:
                 for packet in stream.encode(av.VideoFrame.from_ndarray(img_E, format="rgb48le")):
                     output_container.mux(packet)
