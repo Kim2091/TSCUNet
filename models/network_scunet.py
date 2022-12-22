@@ -266,7 +266,7 @@ class RRDBUpsample(nn.Module):
 
 class SCUNet(nn.Module):
 
-    def __init__(self, in_nc=3, out_nc=3, config=[2,2,2,2,2,2,2], dim=64, drop_path_rate=0.0, input_resolution=256, scale=1, residual=False, state=None):
+    def __init__(self, in_nc=3, out_nc=3, config=[2,2,2,2,2,2,2], dim=64, drop_path_rate=0.0, input_resolution=256, scale=1, residual=True, state=None):
         super(SCUNet, self).__init__()
 
         if state:
@@ -375,8 +375,6 @@ class SCUNet(nn.Module):
         if not self.training:
             paddingLeft += 64
             paddingTop += 64
-            paddingBottom += 64
-            paddingRight += 64
         x0 = nn.ReplicationPad2d((paddingLeft, paddingRight, paddingTop, paddingBottom))(x0)
 
         x1 = self.m_head(x0)

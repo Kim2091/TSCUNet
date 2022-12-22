@@ -89,10 +89,11 @@ def main():
         print('Error: output path must be a single video file')
         return
 
-    if not args.video and not os.path.isdir(E_path) and os.path.isdir(L_path):
-        E_path = os.path.dirname(E_path)
     if not os.path.exists(E_path) and os.path.splitext(E_path)[1] == '':
         util.mkdir(E_path)
+    if not args.video and not os.path.isdir(E_path) and os.path.isdir(L_path):
+        E_path = os.path.dirname(E_path)
+    
 
     logger_name = result_name
     #utils_logger.logger_info(logger_name, log_path=os.path.join(E_path, logger_name+'.log'))
@@ -194,11 +195,11 @@ def main():
             # (2) img_E
             # ------------------------------------
             
-            rng_state = torch.get_rng_state()
-            torch.manual_seed(13)
+            #rng_state = torch.get_rng_state()
+            #torch.manual_seed(13)
             img_E, _ = util.tiled_forward(model, img_L_t, overlap=256, scale=scale)
             img_E = util.tensor2uint(img_E, args.depth)
-            torch.set_rng_state(rng_state)
+            #torch.set_rng_state(rng_state)
 
             # ------------------------------------
             # save results
@@ -234,6 +235,7 @@ def main():
         print("\nCaught KeyboardInterrupt, ending gracefully                    ")
     except av.error.EOFError:
         print("\nEnd of video reached                   ")
+    idx += 1
 
     if video_input:
         input_container.close()
