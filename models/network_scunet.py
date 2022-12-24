@@ -375,6 +375,8 @@ class SCUNet(nn.Module):
         if not self.training:
             paddingLeft += 64
             paddingTop += 64
+            paddingBottom += 64
+            paddingRight += 64
         x0 = nn.ReplicationPad2d((paddingLeft, paddingRight, paddingTop, paddingBottom))(x0)
 
         x1 = self.m_head(x0)
