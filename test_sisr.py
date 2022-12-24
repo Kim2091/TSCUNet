@@ -17,11 +17,6 @@ from utils import utils_model
 from utils import utils_image as util
 
 
-'''
-% If you have any question, please feel free to contact with me.
-% Kai Zhang (e-mail: cskaizhang@gmail.com; github: https://github.com/cszn)
-by Kai Zhang (2021/05-2021/11)
-'''
 
 def get_frame(container):
     try:
@@ -248,5 +243,4 @@ def main():
     print(f'Processed {idx} images in {timedelta(milliseconds=total_time)}, average {total_time / idx:.2f}ms per image              ')
 
 if __name__ == '__main__':
-
     main()
