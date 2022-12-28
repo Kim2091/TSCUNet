@@ -38,7 +38,7 @@ def main():
     parser.add_argument('--model_zoo', type=str, default='model_zoo', help='path of model_zoo')
     parser.add_argument('--input', type=str, default='input', help='path of inputs')
     parser.add_argument('--output', type=str, default='output', help='path of results')
-    parser.add_argument('--depth', type=int, default=8, help='bit depth of outputs')
+    parser.add_argument('--depth', type=int, default=16, help='bit depth of outputs')
     parser.add_argument('--suffix', type=str, default=None, help='output filename suffix')
     parser.add_argument('--video', type=str, default=None, help='video output codec. if not None, output video instead of images')
     parser.add_argument('--video_res', type=str, default='1440:1080', help='video resolution to scale output to')
@@ -212,7 +212,7 @@ def main():
             """
             
             if args.video:
-                for packet in stream.encode(av.VideoFrame.from_ndarray(img_E, format="rgb48le")):
+                for packet in stream.encode(av.VideoFrame.from_ndarray(img_E, format="rgb48le" if args.depth == 16 else "rgb24")):
                     output_container.mux(packet)
             elif os.path.isdir(E_path):
                 util.imsave(img_E, os.path.join(E_path, f'{img_name}_{suffix}.png'))
