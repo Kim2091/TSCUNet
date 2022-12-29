@@ -11,6 +11,7 @@ from datetime import datetime, timedelta
 from collections import OrderedDict
 
 import torch
+torch.backends.cudnn.benchmark = True
 
 from utils import utils_logger
 from utils import utils_model

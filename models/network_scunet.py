@@ -371,17 +371,14 @@ class SCUNet(nn.Module):
 
         paddingH = int(np.ceil(h/64)*64-h)
         paddingW = int(np.ceil(w/64)*64-w)
+        if not self.training:
+            paddingH += 64
+            paddingW += 64
 
         paddingLeft = paddingW // 2
         paddingRight = paddingW // 2
         paddingTop = paddingH // 2
         paddingBottom = paddingH // 2
-
-        if not self.training:
-            paddingBottom += 32
-            paddingRight += 32
-            paddingLeft += 32
-            paddingTop += 32
 
         x0 = nn.ReflectionPad2d((paddingLeft, paddingRight, paddingTop, paddingBottom))(x0)
 

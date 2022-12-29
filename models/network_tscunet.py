@@ -136,40 +136,30 @@ class TSCUNet(nn.Module):
 
         paddingH = int(np.ceil(h/64)*64-h)
         paddingW = int(np.ceil(w/64)*64-w)
+        if not self.training:
+            paddingH += 64
+            paddingW += 64
 
         paddingLeft = paddingW // 2
         paddingRight = paddingW // 2
         paddingTop = paddingH // 2
         paddingBottom = paddingH // 2
 
-        if not self.training:
-            paddingBottom += 32
-            paddingRight += 32
-            paddingLeft += 32
-            paddingTop += 32
-
-        x = rearrange(
-            nn.ReflectionPad2d((paddingLeft, paddingRight, paddingTop, paddingBottom))(
-                rearrange(x, 'b t c h w -> (b t) c h w')
-            ), '(b t) c h w -> b t c h w', b=b)
+        x = nn.ReflectionPad2d((paddingLeft, paddingRight, paddingTop, paddingBottom))(x.view(-1, c, h, w)).view(b, -1, c, h + paddingH, w + paddingW)
 
         for layer in self.m_layers:
-            temp = []
-            for i in range(x.size(1) - 3 + 1):
+            temp = [None] * (t - 2)
+        
+            for i in range(t - 2):
                 window = x[:, i:i+3, ...]
-
                 if window.size(2) != self.dim:
-                    window = rearrange(window, 'b t c h w -> (b t) c h w')
-                    window = self.m_head(window)
-                    window = rearrange(window, '(b t) c h w -> b t c h w', b=b)
+                    window = self.m_head(window.view(-1, c, h + paddingH, w + paddingW)).view(b, -1, self.dim, h + paddingH, w + paddingW)
 
-                widnow = rearrange(window, 'b t c h w -> b (t c) h w')
-                window = layer(widnow)
-                temp.append(window)
-                del window
+                temp[i] = layer(window.view(b, -1, h + paddingH, w + paddingW))
 
             x = torch.stack(temp, dim=1)
-            del temp
+            t = x.size(1)
+
         x = x.squeeze(1)
         
         if self.scale > 1:
