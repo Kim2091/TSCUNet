@@ -107,7 +107,13 @@ def main():
 
     for k, v in model.named_parameters():
         v.requires_grad = False
-    model = model.to(device)
+    model = model.to(device).half()
+
+    torch.cuda.empty_cache()
+    
+    # warmup
+    with torch.no_grad():
+        _ = model(torch.randn(1, 3, 64, 64).to(device).half())
 
     logger.info('Model path: {:s}'.format(model_path))
     number_parameters = sum(map(lambda x: x.numel(), model.parameters()))
@@ -181,7 +187,7 @@ def main():
                 img_count = idx
                 break
 
-            if args.video and args.video_presize:
+            if args.video_presize:
                 img_L = cv2.resize(img_L, (int(args.video_res.split(':')[0])//scale, int(args.video_res.split(':')[1])//scale), interpolation=cv2.INTER_CUBIC)
             
             img_L_t = util.uint2tensor4(img_L)

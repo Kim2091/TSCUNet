@@ -1042,7 +1042,7 @@ def tiled_forward(
         try:
             with torch.no_grad():
                 t_sr = model(t.half())
-            return t_sr.cpu().float().clamp(0.0, 1.0), current_depth # move to cpu so we aren't hogging VRAM from the other tiles
+            return t_sr.float().clamp(0.0, 1.0), current_depth # move to cpu so we aren't hogging VRAM from the other tiles
         except RuntimeError as e:
             if "allocate" in str(e) or "CUDA out of memory" in str(e):
                 torch.cuda.empty_cache()
@@ -1055,10 +1055,10 @@ def tiled_forward(
 
     # take depth from top_left result as the size would be same for all quadrants
     # by re-using the depth, we can know exactly how much tiling is needed immediately
-    tiles_lr_top_left, depth = tiled_forward(model, tiles_lr[0], overlap, current_depth=current_depth + 1)
-    tiles_lr_top_right, _ = tiled_forward(model, tiles_lr[1], overlap, depth, current_depth=current_depth + 1)
-    tiles_lr_bottom_left, _ = tiled_forward(model, tiles_lr[2], overlap, depth, current_depth=current_depth + 1)
-    tiles_lr_bottom_right, _ = tiled_forward(model, tiles_lr[3], overlap, depth, current_depth=current_depth + 1)
+    tiles_lr_top_left, depth = tiled_forward(model, tiles_lr[0], overlap, current_depth=current_depth + 1, scale=scale)
+    tiles_lr_top_right, _ = tiled_forward(model, tiles_lr[1], overlap, depth, current_depth=current_depth + 1, scale=scale)
+    tiles_lr_bottom_left, _ = tiled_forward(model, tiles_lr[2], overlap, depth, current_depth=current_depth + 1, scale=scale)
+    tiles_lr_bottom_right, _ = tiled_forward(model, tiles_lr[3], overlap, depth, current_depth=current_depth + 1, scale=scale)
 
     output_img = join_tiles(
         (tiles_lr_top_left, tiles_lr_top_right, tiles_lr_bottom_left, tiles_lr_bottom_right),

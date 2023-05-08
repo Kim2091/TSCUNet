@@ -375,10 +375,10 @@ class SCUNet(nn.Module):
             paddingH += 64
             paddingW += 64
 
-        paddingLeft = paddingW // 2
-        paddingRight = paddingW // 2
-        paddingTop = paddingH // 2
-        paddingBottom = paddingH // 2
+        paddingLeft = math.ceil(paddingW / 2)
+        paddingRight = math.floor(paddingW / 2)
+        paddingTop = math.ceil(paddingH / 2)
+        paddingBottom = math.floor(paddingH / 2)
 
         x0 = nn.ReflectionPad2d((paddingLeft, paddingRight, paddingTop, paddingBottom))(x0)
 

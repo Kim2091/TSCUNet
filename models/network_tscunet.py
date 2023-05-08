@@ -90,7 +90,7 @@ class TSCUNetBlock(nn.Module):
 
 
 class TSCUNet(nn.Module):
-    def __init__(self, in_nc=3, out_nc=3, clip_size=5, nb=2, dim=64, drop_path_rate=0.0, input_resolution=256, scale=2, state=None):
+    def __init__(self, in_nc=3, out_nc=3, clip_size=5, nb=2, dim=64, drop_path_rate=0.0, input_resolution=256, scale=2, residual=True, sigma=False, state=None):
         super(TSCUNet, self).__init__()
 
         if state:
@@ -103,6 +103,8 @@ class TSCUNet(nn.Module):
 
             scale = 2 ** max(0, len([k for k in state.keys() if re.match(re.compile('m_upsample\.0\.up\.[0-9]+\.weight'), k)])-1)
             input_resolution = 64 if scale > 1 else 256 
+            residual = "m_res.0.weight" in state.keys()
+            sigma = "m_sigma.0.weight" in state.keys()
 
         if clip_size % 2 == 0:
             raise ValueError('TSCUNet clip_size must be odd')
@@ -110,22 +112,39 @@ class TSCUNet(nn.Module):
         self.clip_size = clip_size
         self.dim = dim
         self.scale = scale
-        
+        self.residual = residual
+        self.sigma = sigma
+
         self.m_head = [nn.Conv2d(in_nc, dim, 3, 1, 1, bias=False)]
         self.m_tail = [nn.Conv2d(dim, out_nc, 3, 1, 1, bias=False)]
 
         self.m_layers = [TSCUNetBlock(dim * 3, dim, [nb] * 7, dim, drop_path_rate, input_resolution) for _ in range((clip_size-1)//2)]
 
-        if self.scale > 1:
-            self.m_upsample = [RRDBUpsample(dim, nb=2, scale=self.scale)]
+        if self.residual:
+            self.m_res = [nn.Conv2d(dim, dim, 3, 1, 1, bias=False)]
+        self.m_upsample = [RRDBUpsample(dim, nb=2, scale=self.scale)]
 
-        self.m_head = nn.Sequential(*self.m_head)
-        self.m_tail = nn.Sequential(*self.m_tail)
-        self.m_layers = nn.ModuleList(self.m_layers)
+        if self.sigma:
+            # https://arxiv.org/abs/2201.10084
+            # Revisiting L1 Loss in Super-Resolution: A Probabilistic View and Beyond
+            self.m_sigma = []
+            for _ in range(4):
+                self.m_sigma += [nn.Conv2d(dim, dim, 3, 1, 1, bias=True), nn.PReLU()]
+            self.m_sigma_tail = [nn.Conv2d(dim, out_nc, 3, 1, 1, bias=False)]
 
-        if scale > 1:
-            self.m_upsample = nn.Sequential(*self.m_upsample)
 
+        self.m_head = nn.Sequential(*self.m_head).to(memory_format=torch.channels_last)
+        self.m_tail = nn.Sequential(*self.m_tail).to(memory_format=torch.channels_last)
+        self.m_layers = nn.ModuleList(self.m_layers).to(memory_format=torch.channels_last)
+
+        if self.residual:
+            self.m_res = nn.Sequential(*self.m_res)
+        self.m_upsample = nn.Sequential(*self.m_upsample).to(memory_format=torch.channels_last)
+
+        if self.sigma:
+            self.m_sigma = nn.Sequential(*self.m_sigma).to(memory_format=torch.channels_last)
+            self.m_sigma_tail = nn.Sequential(*self.m_sigma_tail).to(memory_format=torch.channels_last)
+        
         if state:
             self.load_state_dict(state, strict=True)
 
@@ -136,38 +155,46 @@ class TSCUNet(nn.Module):
 
         paddingH = int(np.ceil(h/64)*64-h)
         paddingW = int(np.ceil(w/64)*64-w)
+        
         if not self.training:
             paddingH += 64
             paddingW += 64
 
-        paddingLeft = paddingW // 2
-        paddingRight = paddingW // 2
-        paddingTop = paddingH // 2
-        paddingBottom = paddingH // 2
+        paddingLeft = math.ceil(paddingW / 2)
+        paddingRight = math.floor(paddingW / 2)
+        paddingTop = math.ceil(paddingH / 2)
+        paddingBottom = math.floor(paddingH / 2)
 
-        x = nn.ReflectionPad2d((paddingLeft, paddingRight, paddingTop, paddingBottom))(x.view(-1, c, h, w)).view(b, -1, c, h + paddingH, w + paddingW)
+        x = self.m_head(nn.ReflectionPad2d((paddingLeft, paddingRight, paddingTop, paddingBottom))(x.view(-1, c, h, w)).to(memory_format=torch.channels_last)).to(memory_format=torch.contiguous_format).view(b, -1, self.dim, h + paddingH, w + paddingW)
+        x1 = x
 
         for layer in self.m_layers:
             temp = [None] * (t - 2)
         
             for i in range(t - 2):
-                window = x[:, i:i+3, ...]
-                if window.size(2) != self.dim:
-                    window = self.m_head(window.view(-1, c, h + paddingH, w + paddingW)).view(b, -1, self.dim, h + paddingH, w + paddingW)
+                temp[i] = layer(x1[:, i:i+3, ...].reshape(b, -1, h + paddingH, w + paddingW).to(memory_format=torch.channels_last)).to(memory_format=torch.contiguous_format)
 
-                temp[i] = layer(window.view(b, -1, h + paddingH, w + paddingW))
+            x1 = torch.stack(temp, dim=1)
+            t = x1.size(1)
 
-            x = torch.stack(temp, dim=1)
-            t = x.size(1)
-
-        x = x.squeeze(1)
+        x1 = x1.squeeze(1).to(memory_format=torch.channels_last)
         
-        if self.scale > 1:
-            x = self.m_upsample(x)
-        x = self.m_tail(x)
+        if self.residual:
+            x1 = x1 + self.m_res(x[:, self.clip_size//2, ...].to(memory_format=torch.channels_last))
+                
+        x1 = self.m_upsample(x1)
 
-        x = x[..., paddingTop*self.scale:paddingTop*self.scale+h*self.scale, paddingLeft*self.scale:paddingLeft*self.scale+w*self.scale]
-        return x
+        if self.sigma and self.training:
+            sigma = self.m_sigma(x1)
+            sigma = self.m_sigma_tail(sigma + x1).to(memory_format=torch.contiguous_format)
+            sigma = sigma[..., paddingTop*self.scale:paddingTop*self.scale+h*self.scale, paddingLeft*self.scale:paddingLeft*self.scale+w*self.scale]
+
+        x1 = self.m_tail(x1).to(memory_format=torch.contiguous_format)
+        x1 = x1[..., paddingTop*self.scale:paddingTop*self.scale+h*self.scale, paddingLeft*self.scale:paddingLeft*self.scale+w*self.scale]
+        
+        if self.sigma and self.training:
+            return x1, sigma
+        return x1
 
 
 

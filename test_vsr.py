@@ -16,28 +16,8 @@ torch.backends.cudnn.benchmark = True
 from utils import utils_logger
 from utils import utils_model
 from utils import utils_image as util
-from utils.utils_video import VideoEncoder, get_codec_options
+from utils.utils_video import VideoDecoder, VideoEncoder, get_codec_options
 
-
-'''
-% If you have any question, please feel free to contact with me.
-% Kai Zhang (e-mail: cskaizhang@gmail.com; github: https://github.com/cszn)
-by Kai Zhang (2021/05-2021/11)
-'''
-
-_frames = {}
-def get_frame(container):
-    if hash(container) not in _frames:
-        _frames[hash(container)] = []
-    if len(_frames[hash(container)]) > 0:
-        return _frames.pop(0)
-
-    try:
-        [_frames[hash(container)].append(frame.to_ndarray(format='rgb24')) for frame in container.decode(video=0)]
-    except:
-        return None
-
-    return _frames[hash(container)].pop(0)
 
 def main():
 
@@ -114,21 +94,27 @@ def main():
     # ----------------------------------------
     # load model
     # ----------------------------------------
+    torch.cuda.empty_cache()
+
     from models.network_tscunet import TSCUNet as net
     model = net(state=torch.load(model_path))
     model.eval()
     scale = model.scale
     clip_size = model.clip_size
+    sigma = model.sigma
 
     for k, v in model.named_parameters():
         v.requires_grad = False
     model = model.to(device).half()
+    
+    input_shape = (1, clip_size, 3, 540, 720)
+    dummy_input = torch.randn(input_shape).to(device).half()
 
     torch.cuda.empty_cache()
     
     # warmup
     with torch.no_grad():
-        _ = model(torch.randn(1, 5, 3, 128, 128).to(device).half())
+        _ = model(dummy_input)
 
     logger.info('Model path: {:s}'.format(model_path))
     number_parameters = sum(map(lambda x: x.numel(), model.parameters()))
@@ -146,11 +132,9 @@ def main():
         suffix = f"{model_name}" if f"{scale}x_" in model_name else f"{scale}x_{model_name}"
 
     if video_input:
-        input_container = av.open(L_path, options={'filter:v': 'yadif', 'r': '24000/1001'})
-        input_stream = input_container.streams.video[0]
-        input_stream.thread_type = 'AUTO'
-        # approximate number of frames with a couple seconds of headroom
-        img_count = int((input_container.duration/1000000 + 10)*23.976)
+        video_decoder = VideoDecoder(L_path, options={'r': '24000/1001' }) # 'filter:v': 'yadif', 
+        img_count = len(video_decoder)
+        video_decoder.start()
     else:
         img_count = len(L_paths)
 
@@ -188,7 +172,7 @@ def main():
             # (1) img_L
             # ------------------------------------
             if video_input:
-                img_L = get_frame(input_container)
+                img_L = video_decoder.get_frame()
             elif len(L_paths) == 0:
                 img_L = None
             else:
@@ -234,7 +218,9 @@ def main():
                 h, w = window.shape[-2:]
                 window = torch.cat([window, torch.flip(torch.roll(window, (h//2, w//2), (-2, -1)), [-4, -3, -2, -1])], dim=0) # tta
 
-            img_E, _ = util.tiled_forward(model, window, overlap=256, scale=scale)
+            img_E = model(window.half())
+            #img_E, _ = util.tiled_forward(model, window, overlap=256, scale=scale)
+            
             del window
 
             if tta:
@@ -242,11 +228,15 @@ def main():
                 img_E = torch.stack([img_E[0], torch.flip(torch.roll(img_E[1], (h, w), (-2, -1)), [-3, -2, -1])], dim=0)
                 img_E = torch.mean(img_E, dim=0, keepdim=True)
 
-            img_E = util.tensor2uint(img_E, args.depth)
-            #torch.set_rng_state(rng_state)
-
+            # replace the current frame in the window with the reconstructed frame
+            #input_window[clip_size//2] = torch.nn.functional.interpolate(img_E, scale_factor=1/scale, mode='bicubic')
             # remove the oldest frame from the window
             input_window.pop(0)
+
+            img_E = util.tensor2uint(img_E, args.depth)
+            #if sigma:
+            #    img_sigma = util.tensor2uint(img_E, args.depth)
+            #torch.set_rng_state(rng_state)
 
             # ------------------------------------
             # save results
@@ -272,19 +262,22 @@ def main():
             print(f'{idx}/{img_count}   fps: {1000/time_taken:.2f}  frame time: {time_taken:2f}ms   time remaining: {math.trunc(time_remaining/3600)}h{math.trunc((time_remaining/60)%60)}m{math.trunc(time_remaining%60)}s ', end='\r')
     except KeyboardInterrupt:
         print("\nCaught KeyboardInterrupt, ending gracefully")
-    except av.error.EOFError:
-        print("\nEnd of video reached")
+    except Exception as e:
+        print("\n" + str(e))
     else:
         print("\n")
 
-    if video_input:
-        input_container.close()
     if args.video:
         video_encoder.stop()
         video_encoder.join()
-        print(f"Saved video to {E_path}")
+        if idx > 0:
+            print(f"Saved video to {E_path}")
+    if video_input:
+        video_decoder.stop()
+        video_decoder.join()
 
-    print(f'Processed {idx} images in {timedelta(milliseconds=total_time)}, average {total_time / idx:.2f}ms per image              ')
+    if idx > 0:
+        print(f'Processed {idx} images in {timedelta(milliseconds=total_time)}, average {total_time / idx:.2f}ms per image              ')
 
 if __name__ == '__main__':
 
