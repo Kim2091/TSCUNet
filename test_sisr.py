@@ -28,37 +28,31 @@ def get_frame(container):
 
 
 def main():
+    # TODO: match with the more upto date inference code in test_vsr
+
+    n_channels = 3
 
     # ----------------------------------------
     # Preparation
     # ----------------------------------------
     parser = argparse.ArgumentParser()
-    parser.add_argument('--model_name', type=str, default=None, help='scunet_color_real_psnr, scunet_color_real_gan')
     parser.add_argument('--model_path', type=str, default=None, help='path to the model')
-    parser.add_argument('--show_img', type=bool, default=False, help='show the image')
-    parser.add_argument('--model_zoo', type=str, default='model_zoo', help='path of model_zoo')
     parser.add_argument('--input', type=str, default='input', help='path of inputs')
     parser.add_argument('--output', type=str, default='output', help='path of results')
     parser.add_argument('--depth', type=int, default=16, help='bit depth of outputs')
     parser.add_argument('--suffix', type=str, default=None, help='output filename suffix')
-    parser.add_argument('--video', type=str, default=None, help='video output codec. if not None, output video instead of images')
-    parser.add_argument('--video_res', type=str, default='1440:1080', help='video resolution to scale output to')
-    parser.add_argument('--video_presize', action='store_true', help='resize video to video_res/scale before processing')
-    parser.add_argument('--avg_color_fix_scale', type=float, default=0.0, help='fix average color of output to match input')
+    parser.add_argument('--video', type=str, default=None, help='video output codec. if not None, output video instead of images', choices=['dnxhd', 'libx264', 'libx265'])
+    parser.add_argument('--res', type=str, default='1440:1080', help='video resolution to scale output to')
+    parser.add_argument('--presize', action='store_true', help='resize video to video_res/scale before processing')
 
     args = parser.parse_args()
 
-    n_channels = 3
+    if not args.model_path:
+        parser.print_help()
+        raise ValueError('Please specify model_path')
 
-    if not args.model_name and not args.model_path:
-        raise ValueError('Please specify either the model_name or model_path')
-
-    if args.model_name == None:
-        model_path = args.model_path
-        model_name = os.path.splitext(os.path.basename(model_path))[0]
-    else:
-        model_name = args.model_name
-        model_path = os.path.join(args.model_zoo, model_name+'.pth')
+    model_path = args.model_path
+    model_name = os.path.splitext(os.path.basename(model_path))[0]
 
     result_name = os.path.basename(args.input) + '_' + model_name     # fixed
     
@@ -159,8 +153,8 @@ def main():
         
         output_container = av.open(E_path, mode='w')
         stream = output_container.add_stream(args.video, rate=Fraction(24000, 1001), options=options)
-        stream.width = int(args.video_res.split(':')[0])
-        stream.height = int(args.video_res.split(':')[1])
+        stream.width = int(args.res.split(':')[0])
+        stream.height = int(args.res.split(':')[1])
         stream.pix_fmt = "yuv444p10le"
 
 
@@ -187,8 +181,8 @@ def main():
                 img_count = idx
                 break
 
-            if args.video_presize:
-                img_L = cv2.resize(img_L, (int(args.video_res.split(':')[0])//scale, int(args.video_res.split(':')[1])//scale), interpolation=cv2.INTER_CUBIC)
+            if args.presize:
+                img_L = cv2.resize(img_L, (int(args.res.split(':')[0])//scale, int(args.res.split(':')[1])//scale), interpolation=cv2.INTER_CUBIC)
             
             img_L_t = util.uint2tensor4(img_L)
             img_L_t = img_L_t.to(device)
@@ -207,7 +201,7 @@ def main():
             # save results
             # ------------------------------------
             if args.video:
-                img_E = cv2.resize(img_E, (int(args.video_res.split(':')[0]), int(args.video_res.split(':')[1])), interpolation=cv2.INTER_CUBIC)
+                img_E = cv2.resize(img_E, (int(args.res.split(':')[0]), int(args.res.split(':')[1])), interpolation=cv2.INTER_CUBIC)
             if args.avg_color_fix_scale > 0.01:
                 img_E = util.avg_color_fix(img_E, img_L, args.avg_color_fix_scale)
             """

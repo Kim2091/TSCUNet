@@ -13,47 +13,38 @@ from collections import OrderedDict
 import torch
 torch.backends.cudnn.benchmark = True
 
-from utils import utils_logger
-from utils import utils_model
 from utils import utils_image as util
 from utils.utils_video import VideoDecoder, VideoEncoder, get_codec_options
 
 
 def main():
+    n_channels = 3
 
     # ----------------------------------------
     # Preparation
     # ----------------------------------------
     parser = argparse.ArgumentParser()
-    parser.add_argument('--model_name', type=str, default=None, help='scunet_color_real_psnr, scunet_color_real_gan')
     parser.add_argument('--model_path', type=str, default=None, help='path to the model')
     parser.add_argument('--show_img', type=bool, default=False, help='show the image')
-    parser.add_argument('--model_zoo', type=str, default='model_zoo', help='path of model_zoo')
     parser.add_argument('--input', type=str, default='input', help='path of inputs')
     parser.add_argument('--output', type=str, default='output', help='path of results')
     parser.add_argument('--depth', type=int, default=16, help='bit depth of outputs')
     parser.add_argument('--suffix', type=str, default=None, help='output filename suffix')
-    parser.add_argument('--video', type=str, default=None, help='video output codec. if not None, output video instead of images')
+    parser.add_argument('--video', type=str, default=None, help='video output codec. if not None, output video instead of images', choices=['dnxhd', 'libx264', 'libx265'])
     parser.add_argument('--res', type=str, default='1440:1080', help='video resolution to scale output to')
     parser.add_argument('--presize', action='store_true', help='resize video to res/scale before processing')
 
     args = parser.parse_args()
 
-    n_channels = 3
+    if not args.model_path:
+        parser.print_help()
+        raise ValueError('Please specify model_path')
 
-    if not args.model_name and not args.model_path:
-        raise ValueError('Please specify either the model_name or model_path')
-
-    if args.model_name == None:
-        model_path = args.model_path
-        model_name = os.path.splitext(os.path.basename(model_path))[0]
-    else:
-        model_name = args.model_name
-        model_path = os.path.join(args.model_zoo, model_name+'.pth')
+    model_path = args.model_path
+    model_name = os.path.splitext(os.path.basename(model_path))[0]
 
     result_name = os.path.basename(args.input) + '_' + model_name     # fixed
     
-
     # ----------------------------------------
     # L_path, E_path
     # ----------------------------------------
