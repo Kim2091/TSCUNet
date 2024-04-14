@@ -413,8 +413,6 @@ class SCUNet(nn.Module):
             nn.init.constant_(m.bias, 0)
             nn.init.constant_(m.weight, 1.0)
 
-
-
 if __name__ == '__main__':
 
     # torch.cuda.empty_cache()

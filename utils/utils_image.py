@@ -1042,8 +1042,8 @@ def tiled_forward(
         # attempt non-tiled super-resolution if no known depth, or at depth
         try:
             with torch.no_grad():
-                t_sr = model(t.half())
-            return t_sr.float().clamp(0.0, 1.0), current_depth # move to cpu so we aren't hogging VRAM from the other tiles
+                t_sr = model(t)
+            return t_sr.float(), current_depth # move to cpu so we aren't hogging VRAM from the other tiles
         except RuntimeError as e:
             if "allocate" in str(e) or "CUDA out of memory" in str(e):
                 torch.cuda.empty_cache()

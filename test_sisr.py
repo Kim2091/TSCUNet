@@ -1,21 +1,31 @@
-from fractions import Fraction
+import argparse
+import cv2
 import math
 import os.path
-import logging
-import argparse
-import av
-import cv2
-
-import numpy as np
-from datetime import datetime, timedelta
-from collections import OrderedDict
-
 import torch
-torch.backends.cudnn.benchmark = True
+
+from datetime import timedelta
+from fractions import Fraction
 
 from utils import utils_image as util
 from utils.utils_video import VideoDecoder, VideoEncoder
 
+if not torch.cuda.is_available():
+    print('CUDA is not available. Exiting...')
+    exit()
+
+default_device = torch.device('cuda')
+torch.backends.cudnn.benchmark = True
+
+if torch.cuda.is_bf16_supported():
+    default_dtype = torch.bfloat16
+else:
+    props = torch.cuda.get_device_properties(default_device)
+    # fp16 supported at compute 5.3 and above
+    if props.major > 5 or (props.major == 5 and props.minor >= 3):
+        default_dtype = torch.float16
+    else:
+        default_dtype = torch.float32
 
 def main():
     n_channels = 3
@@ -77,8 +87,6 @@ def main():
     if not args.video and not os.path.isdir(E_path) and os.path.isdir(L_path):
         E_path = os.path.dirname(E_path)
     
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
     # ----------------------------------------
     # load model
     # ----------------------------------------
@@ -91,20 +99,19 @@ def main():
 
     for k, v in model.named_parameters():
         v.requires_grad = False
-    model = model.to(device).half()
+    model = model.to(default_device)
     
-    input_shape = (1, 3, 540, 720)
-    dummy_input = torch.randn(input_shape).to(device).half()
+    input_shape = (1, 3, 256, 256)
+    dummy_input = torch.randn(input_shape).to(default_device, dtype=default_dtype)
 
     torch.cuda.empty_cache()
     
     # warmup
     with torch.no_grad():
-        _ = model(dummy_input)
+        with torch.cuda.amp.autocast(enabled=(default_dtype is not torch.float32), dtype=default_dtype):
+            _ = model(dummy_input)
 
     print('Model path: {:s}'.format(model_path))
-    number_parameters = sum(map(lambda x: x.numel(), model.parameters()))
-    print('Params number: {}'.format(number_parameters))
 
     print('model_name:{}'.format(model_name))
     print(L_path)
@@ -176,7 +183,7 @@ def main():
                 img_L = cv2.resize(img_L, (int(args.res.split(':')[0])//scale, int(args.res.split(':')[1])//scale), interpolation=cv2.INTER_CUBIC)
             
             img_L_t = util.uint2tensor4(img_L)
-            img_L_t = img_L_t.to(device)
+            img_L_t = img_L_t.to(default_device, dtype=default_dtype)
 
             # ------------------------------------
             # (2) img_E
@@ -185,7 +192,8 @@ def main():
             #rng_state = torch.get_rng_state()
             #torch.manual_seed(13)
             
-            img_E = model(img_L_t.half())
+            with torch.cuda.amp.autocast(enabled=(default_dtype is not torch.float32), dtype=default_dtype):
+                img_E = model(img_L_t)
             #img_E, _ = util.tiled_forward(model, img_L_t, overlap=256, scale=scale)
             
             img_E = util.tensor2uint(img_E, args.depth)

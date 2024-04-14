@@ -22,7 +22,7 @@ Both architectures support image inputs with video output and vice-versa. Input 
 
 Additionally, the `--presize` argument can be used to resize the input to the target resolution divided by the scale, which can be produce better results when the output resolution is short of the target resolution or if the original aspect ratio does not match the target aspect ratio.
 ```bash
-python test_vsr.py --model_path pretrained_models/tscu_2x.pth --input example/lr_video.mp4 --output example/sr_video.mp4 --codec libx264 --res 1440:1080 --presize --depth 16
+python test_vsr.py --model_path pretrained_models/tscu_2x.pth --input example/lr_video.mp4 --output example/sr_video.mp4 --video libx264 --res 1440:1080 --presize --depth 16
 ```
 
 Original Paper
