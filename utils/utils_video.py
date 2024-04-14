@@ -5,24 +5,6 @@ import queue
 
 from fractions import Fraction
 
-def get_codec_options(codec):
-    pix_fmt = 'yuv444p10le'
-    options = { 'c': codec }
-
-    if codec == 'dnxhd':
-        options['profile'] = 'dnxhr_444'
-    elif codec == 'libx264':
-        options['profile'] = 'high444'
-        options['crf'] = '11'
-        options['preset'] = 'medium'
-    elif codec == 'libx265':
-        options['profile'] = 'main444-12'
-        options['crf'] = '11'
-        options['preset'] = 'medium'
-        pix_fmt = 'yuv444p12le'
-
-    return pix_fmt, options
-
 class VideoDecoder(threading.Thread):
     def __init__(self, input_path, options={}):
         super().__init__()
@@ -95,7 +77,8 @@ class VideoEncoder(threading.Thread):
                 continue
 
             # Encode the frame
-            for packet in self.stream.encode(av.VideoFrame.from_ndarray(frame, format="rgb48le" if self.input_depth == 16 else "rgb24")):
+            frame = av.VideoFrame.from_ndarray(frame, format="rgb48le" if self.input_depth == 16 else "rgb24")
+            for packet in self.stream.encode(frame):
                 self.output_container.mux(packet)
             
             del frame

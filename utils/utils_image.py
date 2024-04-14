@@ -287,7 +287,7 @@ def uint2tensor3(img):
     bit_depth = img.dtype.itemsize * 8
     if img.ndim == 2:
         img = np.expand_dims(img, axis=2)
-    return torch.from_numpy(np.ascontiguousarray(img).astype(np.float)).permute(2, 0, 1).float().div(2.**bit_depth-1)
+    return torch.from_numpy(np.ascontiguousarray(img).astype(np.float32)).permute(2, 0, 1).float().div(2.**bit_depth-1)
 
 
 # convert 2/3/4-dimensional torch tensor to uint
@@ -1025,7 +1025,8 @@ def tiled_forward(
     overlap: int = 16,
     max_depth: int = None,
     current_depth: int = 1,
-    scale: int = 4
+    scale: int = 4,
+    max_tile_size: int = 1024,
 ) -> tuple[torch.Tensor, int]:
     """
     Recursively Tile PyTorch Tensor until the device has enough VRAM.
@@ -1037,7 +1038,7 @@ def tiled_forward(
         gc.collect()
         raise RecursionError("Exceeded maximum tiling recursion of 10...")
 
-    if max_depth is None or max_depth == current_depth:
+    if (max_depth is None or max_depth == current_depth) and (t.size(-2) <= max_tile_size and t.size(-1) <= max_tile_size):
         # attempt non-tiled super-resolution if no known depth, or at depth
         try:
             with torch.no_grad():

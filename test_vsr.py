@@ -14,7 +14,7 @@ import torch
 torch.backends.cudnn.benchmark = True
 
 from utils import utils_image as util
-from utils.utils_video import VideoDecoder, VideoEncoder, get_codec_options
+from utils.utils_video import VideoDecoder, VideoEncoder
 
 
 def main():
@@ -25,14 +25,18 @@ def main():
     # ----------------------------------------
     parser = argparse.ArgumentParser()
     parser.add_argument('--model_path', type=str, default=None, help='path to the model')
-    parser.add_argument('--show_img', type=bool, default=False, help='show the image')
     parser.add_argument('--input', type=str, default='input', help='path of inputs')
     parser.add_argument('--output', type=str, default='output', help='path of results')
     parser.add_argument('--depth', type=int, default=16, help='bit depth of outputs')
     parser.add_argument('--suffix', type=str, default=None, help='output filename suffix')
-    parser.add_argument('--video', type=str, default=None, help='video output codec. if not None, output video instead of images', choices=['dnxhd', 'libx264', 'libx265'])
+    parser.add_argument('--video', type=str, default=None, help='ffmpeg video codec. if chosen, output video instead of images', choices=['dnxhd', 'libx264', 'libx265', '...'])
+    parser.add_argument('--vprofile', type=str, default='high444', help='video profile')
+    parser.add_argument('--crf', type=int, default=11, help='video crf')
+    parser.add_argument('--preset', type=str, default='slow', help='video preset')
+    parser.add_argument('--pix_fmt', type=str, default='yuv444p10le', help='video pixel format')
+    parser.add_argument('--fps', type=str, default='24000/1001', help='video framerate')
     parser.add_argument('--res', type=str, default='1440:1080', help='video resolution to scale output to')
-    parser.add_argument('--presize', action='store_true', help='resize video to res/scale before processing')
+    parser.add_argument('--presize', action='store_true', help='resize video before processing')
 
     args = parser.parse_args()
 
@@ -42,8 +46,6 @@ def main():
 
     model_path = args.model_path
     model_name = os.path.splitext(os.path.basename(model_path))[0]
-
-    result_name = os.path.basename(args.input) + '_' + model_name     # fixed
     
     # ----------------------------------------
     # L_path, E_path
@@ -75,11 +77,6 @@ def main():
     if not args.video and not os.path.isdir(E_path) and os.path.isdir(L_path):
         E_path = os.path.dirname(E_path)
     
-
-    logger_name = result_name
-    #utils_logger.logger_info(logger_name, log_path=os.path.join(E_path, logger_name+'.log'))
-    logger = logging.getLogger(logger_name)
-
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     # ----------------------------------------
@@ -92,7 +89,6 @@ def main():
     model.eval()
     scale = model.scale
     clip_size = model.clip_size
-    sigma = model.sigma
 
     for k, v in model.named_parameters():
         v.requires_grad = False
@@ -107,15 +103,15 @@ def main():
     with torch.no_grad():
         _ = model(dummy_input)
 
-    logger.info('Model path: {:s}'.format(model_path))
+    print('Model path: {:s}'.format(model_path))
     number_parameters = sum(map(lambda x: x.numel(), model.parameters()))
-    logger.info('Params number: {}'.format(number_parameters))
+    print('Params number: {}'.format(number_parameters))
 
-    logger.info('model_name:{}'.format(model_name))
-    logger.info(L_path)
+    print('model_name:{}'.format(model_name))
+    print(L_path)
 
     num_parameters = sum(map(lambda x: x.numel(), model.parameters()))
-    logger.info('{:>16s} : {:<.4f} [M]'.format('#Params', num_parameters/10**6))
+    print('{:>16s} : {:<.4f} [M]'.format('#Params', num_parameters/10**6))
 
     if args.suffix:
         suffix = f"{scale}x_{args.suffix}"
@@ -129,21 +125,28 @@ def main():
     else:
         img_count = len(L_paths)
 
-
     if args.video:
-        if args.video not in ('libx264', 'libx265', 'dnxhd'):
-            print(f"Unsupported video codec: {args.video}")
-            return
+        if '/' in args.fps:
+            fps = Fraction(*map(int, args.fps.split('/')))
+        elif '.' in args.fps:
+            fps = float(args.fps)
+        else:
+            fps = int(args.fps)
 
-        pix_fmt, options = get_codec_options(args.video)
+        codec_options = {
+            'crf':  str(args.crf),
+            'preset': args.preset,
+            'profile': args.vprofile,
+            'pix_fmt': args.pix_fmt,
+        }
         video_encoder = VideoEncoder(
             E_path,
             int(args.res.split(':')[0]),
             int(args.res.split(':')[1]),
-            fps=Fraction(24000, 1001),
+            fps=fps,
             codec=args.video,
-            pix_fmt=pix_fmt,
-            options=options,
+            pix_fmt=args.pix_fmt,
+            options=codec_options,
             input_depth=args.depth,
         )
         video_encoder.start()
@@ -204,20 +207,10 @@ def main():
             #torch.manual_seed(13)
             window = torch.stack(input_window[:clip_size], dim=1)
             
-            tta = False
-            if tta:
-                h, w = window.shape[-2:]
-                window = torch.cat([window, torch.flip(torch.roll(window, (h//2, w//2), (-2, -1)), [-4, -3, -2, -1])], dim=0) # tta
-
             img_E = model(window.half())
             #img_E, _ = util.tiled_forward(model, window, overlap=256, scale=scale)
             
             del window
-
-            if tta:
-                # reverse tta
-                img_E = torch.stack([img_E[0], torch.flip(torch.roll(img_E[1], (h, w), (-2, -1)), [-3, -2, -1])], dim=0)
-                img_E = torch.mean(img_E, dim=0, keepdim=True)
 
             # replace the current frame in the window with the reconstructed frame
             #input_window[clip_size//2] = torch.nn.functional.interpolate(img_E, scale_factor=1/scale, mode='bicubic')
@@ -225,8 +218,6 @@ def main():
             input_window.pop(0)
 
             img_E = util.tensor2uint(img_E, args.depth)
-            #if sigma:
-            #    img_sigma = util.tensor2uint(img_E, args.depth)
             #torch.set_rng_state(rng_state)
 
             # ------------------------------------
