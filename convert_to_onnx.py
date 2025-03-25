@@ -7,7 +7,7 @@ import math
 from models.network_tscunet import TSCUNet
 
 class TSCUNetExportWrapper(torch.nn.Module):
-    """Wrapper for TSCUNet to make ONNX export more efficient"""
+    """Wrapper for TSCUNet"""
     def __init__(self, model):
         super(TSCUNetExportWrapper, self).__init__()
         self.model = model
@@ -120,7 +120,7 @@ class TSCUNetExportWrapper(torch.nn.Module):
         
         return x1
 
-def convert_tscunet_to_onnx(model_path, onnx_path, clip_size=5, input_shape=None, dynamic=False, optimize=True, fp16=False):
+def convert_tscunet_to_onnx(model_path, onnx_path, clip_size=5, input_shape=None, dynamic=False, optimize=True):
     """
     Convert a TSCUNet PyTorch model to ONNX format
     Args:
@@ -130,7 +130,6 @@ def convert_tscunet_to_onnx(model_path, onnx_path, clip_size=5, input_shape=None
         input_shape: Input shape tuple (batch, clip_size, channels, height, width)
         dynamic: Whether to use dynamic axes for the ONNX model
         optimize: Whether to optimize the model for export
-        fp16: Whether to use FP16 precision for the model
     """
     print(f"Loading PyTorch model from {model_path}")
     
@@ -169,13 +168,6 @@ def convert_tscunet_to_onnx(model_path, onnx_path, clip_size=5, input_shape=None
         
     export_model = export_model.to(device)
     
-    # FP16 WORKAROUND: Use float32 for export but indicate FP16 for later
-    # Create dummy input with float32 (reflection_pad2d doesn't support float16)
-    dummy_input = torch.randn(*input_shape, dtype=torch.float32, device=device)
-    
-    if fp16:
-        print("Will export with FP32 and convert to FP16 after export")
-    
     # Define dynamic axes if requested
     dynamic_axes = None
     if dynamic:
@@ -204,32 +196,6 @@ def convert_tscunet_to_onnx(model_path, onnx_path, clip_size=5, input_shape=None
         
         print(f"Model successfully exported to {onnx_path}")
         
-        # Convert model to FP16 post-export if requested
-        if fp16:
-            try:
-                import onnx
-                from onnxconverter_common import float16
-                
-                # Load the ONNX model
-                onnx_model = onnx.load(onnx_path)
-                
-                # Convert to FP16
-                onnx_model_fp16 = float16.convert_float_to_float16(
-                    onnx_model, 
-                    keep_io_types=True,
-                    op_block_list=['Pad']  # Exclude padding operations from FP16 conversion
-                )
-                
-                # Save the FP16 model
-                onnx.save(onnx_model_fp16, onnx_path)
-                
-                print("Successfully converted model to FP16")
-            except ImportError:
-                print("Warning: onnxconverter-common not installed. FP16 conversion skipped.")
-                print("To install: pip install onnxconverter-common")
-            except Exception as e:
-                print(f"Error converting to FP16: {e}")
-        
         # Verify the model
         try:
             import onnx
@@ -255,7 +221,6 @@ if __name__ == "__main__":
     parser.add_argument("--batch", type=int, default=1, help="Batch size")
     parser.add_argument("--dynamic", action="store_true", help="Use dynamic axes")
     parser.add_argument("--no-optimize", action="store_true", help="Don't use optimized wrapper")
-    parser.add_argument("--fp16", action="store_true", help="Use FP16 precision for export")
     
     args = parser.parse_args()
     
@@ -283,6 +248,5 @@ if __name__ == "__main__":
         clip_size,
         input_shape,
         args.dynamic,
-        not args.no_optimize,
-        args.fp16
+        not args.no_optimize
     )
