@@ -2,3 +2,9 @@ av
 einops
 thop
 timm
+torch
+numpy
+opencv-python
+onnx
+onnxruntime
+onnxconverter-common

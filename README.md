@@ -48,8 +48,14 @@ I added this on to hopefully allow for TensorRT or DirectML support in the near 
 
 3. Run the model
 
+    For upscaling video:
     ```bash
-    python test_onnx.py --model_path model.onnx --input example/lr/ --output example/sr/ --depth 16
+    python test_onnx.py --model_path model.onnx --input path/to/video.mp4 --output path/to/output.mp4
+    ```
+
+    For upscaling images (untested):
+    ```bash
+    python test_onnx.py --model_path model.onnx --input example/lr/ --output example/sr/
     ```
     
     The test script supports both image and video inputs/outputs, similar to the PyTorch testing scripts. Additional arguments:
