@@ -49,7 +49,7 @@ class VideoDecoder(threading.Thread):
         return self.frame_count
 
 class VideoEncoder(threading.Thread):
-    def __init__(self, output_path, width, height, fps=Fraction(24000, 1001), codec='libx264', pix_fmt='yuv444p10le', options={}, input_depth=8):
+    def __init__(self, output_path, width, height, fps=Fraction(24000, 1001), codec='libx264', pix_fmt='yuv420p', options={}, input_depth=8):
         super().__init__()
 
         # Create a video container and stream with the specified codec and parameters

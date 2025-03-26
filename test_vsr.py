@@ -40,13 +40,14 @@ def main():
     parser.add_argument('--output', type=str, default='output', help='path of results')
     parser.add_argument('--depth', type=int, default=16, help='bit depth of outputs')
     parser.add_argument('--suffix', type=str, default=None, help='output filename suffix')
-    parser.add_argument('--video', type=str, default=None, help='ffmpeg video codec. if chosen, output video instead of images', choices=['dnxhd', 'h264_nvenc', 'libx264', 'libx265', '...'])
+    parser.add_argument('--video', type=str, default='libx264', help='ffmpeg video codec. if chosen, output video instead of images', choices=['dnxhd', 'h264_nvenc', 'libx264', 'libx265', 'hevc_nvenc', '...'])
     parser.add_argument('--crf', type=int, default=11, help='video crf')
     parser.add_argument('--preset', type=str, default='slow', help='video preset')
     parser.add_argument('--fps', type=str, default=None, 
                         help='video framerate (defaults to input video\'s frame rate when processing video)')
     parser.add_argument('--res', type=str, default=None, help='video resolution to scale output to (optional, will auto-calculate if not specified)')
     parser.add_argument('--presize', action='store_true', help='resize video before processing')
+    parser.add_argument('--gui-mode', action='store_true', help='Output progress in a format optimized for GUI parsing')
 
     args = parser.parse_args()
 
@@ -287,7 +288,12 @@ def main():
             total_time += time_taken
             time_remaining = ((total_time / (idx)) * (img_count - (idx+1)))/1000
 
-            print(f'{idx}/{img_count}   fps: {1000/time_taken:.2f}  frame time: {time_taken:2f}ms   time remaining: {math.trunc(time_remaining/3600)}h{math.trunc((time_remaining/60)%60)}m{math.trunc(time_remaining%60)}s ', end='\r')
+            if args.gui_mode:
+                # Format optimized for GUI parsing
+                print(f'PROGRESS:{idx}/{img_count}', flush=True)
+            else:
+                # Regular console output
+                print(f'{idx}/{img_count}   fps: {1000/time_taken:.2f}  frame time: {time_taken:2f}ms   time remaining: {math.trunc(time_remaining/3600)}h{math.trunc((time_remaining/60)%60)}m{math.trunc(time_remaining%60)}s ', end='\r')
     except KeyboardInterrupt:
         print("\nCaught KeyboardInterrupt, ending gracefully")
     except Exception as e:

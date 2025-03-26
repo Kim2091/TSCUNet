@@ -164,6 +164,8 @@ def main():
     parser.add_argument('--presize', action='store_true', help='resize video before processing')
     parser.add_argument('--providers', type=str, default='CUDAExecutionProvider,CPUExecutionProvider', 
                         help='ONNX Runtime execution providers, comma separated')
+    parser.add_argument('--gui-mode', action='store_true', 
+                        help='Output progress in a format optimized for GUI parsing')
 
     args = parser.parse_args()
 
@@ -500,8 +502,12 @@ def main():
             idx += 1
             time_remaining = ((total_time / idx) * (img_count - idx)) / 1000
 
-            # For the progress/FPS counter, keep using print:
-            print(f'{idx}/{img_count}   fps: {1000/time_taken:.2f}  frame time: {time_taken:.2f}ms   time remaining: {math.trunc(time_remaining/3600)}h{math.trunc((time_remaining/60)%60)}m{math.trunc(time_remaining%60)}s ', end='\r')
+            if args.gui_mode:
+                # Format optimized for GUI parsing
+                print(f'PROGRESS:{idx}/{img_count}', flush=True)
+            else:
+                # Regular console output
+                print(f'{idx}/{img_count}   fps: {1000/time_taken:.2f}  frame time: {time_taken:.2f}ms   time remaining: {math.trunc(time_remaining/3600)}h{math.trunc((time_remaining/60)%60)}m{math.trunc(time_remaining%60)}s ', end='\r')
                 
     except KeyboardInterrupt:
         logging.info("\nCaught KeyboardInterrupt, ending gracefully")
