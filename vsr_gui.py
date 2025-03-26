@@ -165,7 +165,10 @@ class VSRGUIApp(QMainWindow):
         button_layout.addWidget(self.process_btn)
         button_layout.addWidget(self.stop_btn)
         
-        # Progress bar
+        # Progress bar and FPS in horizontal layout
+        progress_layout = QHBoxLayout()
+        
+        # Progress bar (left side)
         self.progress_bar = QProgressBar()
         self.progress_bar.setVisible(False)
         self.progress_bar.setMinimum(0)
@@ -186,6 +189,12 @@ class VSRGUIApp(QMainWindow):
                 margin: 0px;
             }
         """)
+        progress_layout.addWidget(self.progress_bar)
+        
+        # FPS label (right side)
+        self.fps_label = QLabel("FPS: --")
+        self.fps_label.setMinimumWidth(100)  # Give it some minimum width
+        progress_layout.addWidget(self.fps_label)
         
         # Log box
         log_group = QGroupBox("Processing Log")
@@ -202,7 +211,7 @@ class VSRGUIApp(QMainWindow):
         main_layout.addWidget(output_group)
         main_layout.addWidget(options_group)
         main_layout.addLayout(button_layout)
-        main_layout.addWidget(self.progress_bar)
+        main_layout.addLayout(progress_layout)  # Add the combined progress/FPS layout
         main_layout.addWidget(log_group)
         
         # Initialize QProcess
@@ -349,60 +358,35 @@ class VSRGUIApp(QMainWindow):
         data = self.process.readAllStandardOutput()
         stdout = bytes(data).decode()
         
-        # Check for our special GUI progress format first
+        # Check for our special GUI progress format
         if 'PROGRESS:' in stdout:
-            progress_parts = stdout.split('PROGRESS:')[1].strip().split('/')
-            if len(progress_parts) == 2:
-                self.current_frame = int(progress_parts[0])
-                
-                # If this is the first time we're getting the total
-                if self.total_frames == 0:
-                    self.total_frames = int(progress_parts[1])
-                    # Now that we know the total, set the progress bar maximum
-                    self.progress_bar.setMaximum(self.total_frames)
-                
-                # Update progress bar
-                self.progress_bar.setValue(self.current_frame)
-        else:
-            # Fall back to the original parsing methods
-            # Parse the progress information from test_vsr.py output
-            # The output format looks like: 10/500   fps: 30.25  frame time: 33.06ms
-            progress_regex = QRegularExpression(r'(\d+)/(\d+)\s+fps:')
-            match = progress_regex.match(stdout)
+            # Split the line into progress and FPS parts
+            parts = stdout.split('PROGRESS:')[1].strip().split('|')
             
-            if not match.hasMatch():
-                # If the regular expression doesn't match, try a different approach
-                parts = stdout.strip().split('/')
-                if len(parts) >= 2 and parts[0].isdigit():
-                    # Try to extract numbers from a format like "10/500"
-                    current_part = parts[0].strip()
-                    # The second part might have additional text after the number
-                    total_part = parts[1].split()[0].strip()
+            # Handle progress
+            if len(parts) >= 1:
+                progress_parts = parts[0].split('/')
+                if len(progress_parts) == 2:
+                    self.current_frame = int(progress_parts[0])
                     
-                    if current_part.isdigit() and total_part.isdigit():
-                        self.current_frame = int(current_part)
-                        
-                        # If this is the first time we're getting the total
-                        if self.total_frames == 0:
-                            self.total_frames = int(total_part)
-                            # Now that we know the total, set the progress bar maximum
-                            self.progress_bar.setMaximum(self.total_frames)
-                        
-                        # Update progress bar
-                        self.progress_bar.setValue(self.current_frame)
-            else:
-                # Original regex worked
-                self.current_frame = int(match.captured(1))
-                
-                # If this is the first frame and we don't know total frames yet
-                if self.total_frames == 0:
-                    self.total_frames = int(match.captured(2))
-                    # Now that we know the total, set the progress bar maximum
-                    self.progress_bar.setMaximum(self.total_frames)
-                
-                # Update progress bar
-                self.progress_bar.setValue(self.current_frame)
+                    # If this is the first time we're getting the total
+                    if self.total_frames == 0:
+                        self.total_frames = int(progress_parts[1])
+                        # Now that we know the total, set the progress bar maximum
+                        self.progress_bar.setMaximum(self.total_frames)
+                    
+                    # Update progress bar
+                    self.progress_bar.setValue(self.current_frame)
+            
+            # Handle FPS
+            if len(parts) >= 2 and 'FPS:' in parts[1]:
+                try:
+                    fps = float(parts[1].split(':')[1])
+                    self.fps_label.setText(f"FPS: {fps:.2f}")
+                except (IndexError, ValueError):
+                    pass
         
+        # Always append to log
         self.log_box.append(stdout)
         
     def handle_stderr(self):
@@ -414,6 +398,7 @@ class VSRGUIApp(QMainWindow):
         self.progress_bar.setVisible(False)
         self.process_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
+        self.fps_label.setText("FPS: --")  # Reset FPS display
         self.log_box.append("\nProcessing completed!")
         self.process = None
 

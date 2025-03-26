@@ -503,8 +503,8 @@ def main():
             time_remaining = ((total_time / idx) * (img_count - idx)) / 1000
 
             if args.gui_mode:
-                # Format optimized for GUI parsing
-                print(f'PROGRESS:{idx}/{img_count}', flush=True)
+                # Format optimized for GUI parsing - now includes FPS
+                print(f'PROGRESS:{idx}/{img_count}|FPS:{1000/time_taken:.2f}', flush=True)
             else:
                 # Regular console output
                 print(f'{idx}/{img_count}   fps: {1000/time_taken:.2f}  frame time: {time_taken:.2f}ms   time remaining: {math.trunc(time_remaining/3600)}h{math.trunc((time_remaining/60)%60)}m{math.trunc(time_remaining%60)}s ', end='\r')
