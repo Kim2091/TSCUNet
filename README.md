@@ -1,4 +1,3 @@
-# TSCUNet - Temporal modification of the SCUNet Architecture
 
 # Beginner's Guide
 
