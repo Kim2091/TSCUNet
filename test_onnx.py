@@ -473,13 +473,18 @@ def main():
                     except:
                         pass
 
-        if video_input:
+        if video_encoder is not None:
             try:
-                video_decoder.stop()
+                video_encoder.stop()
                 # Add timeout to join to prevent hanging
-                video_decoder.join(timeout=5)
+                video_encoder.join(timeout=5)
+                if idx > 0:
+                    print(f"Saved video to {E_path}")
+                    # Print hyperlink to output directory instead of file
+                    output_dir = os.path.dirname(os.path.abspath(E_path))
+                    print(f"\033]8;;file://{output_dir}\033\\Click to open output directory\033]8;;\033\\")
             except Exception as e:
-                print(f"Error while closing video decoder: {e}")
+                print(f"Error while closing video encoder: {e}")
 
         if idx > 0:
             print(f'Processed {idx} images in {timedelta(milliseconds=total_time)}, average {total_time / idx:.2f}ms per image              ')

@@ -318,8 +318,9 @@ def main():
                 video_encoder.join(timeout=5)
                 if idx > 0:
                     print(f"Saved video to {E_path}")
-                    # Add hyperlink to output file using terminal escape codes
-                    print(f"\033]8;;file://{os.path.abspath(E_path)}\033\\Click to open output video\033]8;;\033\\")
+                    # Print hyperlink to output directory instead of file
+                    output_dir = os.path.dirname(os.path.abspath(E_path))
+                    print(f"\033]8;;file://{output_dir}\033\\Click to open output directory\033]8;;\033\\")
             except Exception as e:
                 print(f"Error while closing video encoder: {e}")
 

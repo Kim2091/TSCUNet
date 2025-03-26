@@ -78,7 +78,6 @@ class TSCUNetExportWrapper(torch.nn.Module):
                 frame_window_reshaped = frame_window.reshape(b, 3 * self.dim, h_padded, w_padded)
                 
                 # Use the specific layer for this position
-                # In TSCUNet, typically layer i processes window position i
                 layer_idx = i % len(self.m_layers)  # In case t-2 > number of layers
                 layer_output = self.m_layers[layer_idx](frame_window_reshaped)
                 temp_outputs.append(layer_output)
@@ -118,9 +117,116 @@ class TSCUNetExportWrapper(torch.nn.Module):
         
         x1 = x1[:, :, padTop_scaled:padTop_scaled+h_out, padLeft_scaled:padLeft_scaled+w_out]
         
+        # CRITICAL CHANGE: Force output to be exactly 4D (B, C, H, W)
+        # This ensures ONNX export matches PyTorch output shape
+        x1 = x1.view(b, -1, h_out, w_out)  # Explicit reshaping instead of conditional squeeze
+        
         return x1
 
-def convert_tscunet_to_onnx(model_path, onnx_path, clip_size=5, input_shape=None, dynamic=False, optimize=True):
+def verify_onnx_output(model, onnx_path, test_input, rtol=1e-2, atol=1e-3, save_outputs=False):
+    """
+    Verify ONNX model output against PyTorch model output
+    
+    Args:
+        model: PyTorch model
+        onnx_path: Path to the exported ONNX model
+        test_input: Input tensor with shape (batch, clip_size, channels, height, width)
+        rtol: Relative tolerance for output comparison
+        atol: Absolute tolerance for output comparison
+        save_outputs: Whether to save intermediate outputs for debugging
+    """
+    try:
+        import onnx
+        import onnxruntime as ort
+        
+        # Verify input shape
+        if len(test_input.shape) != 5:
+            raise ValueError(f"Expected 5D input (batch, time=5, channels, height, width), got shape {test_input.shape}")
+        
+        if test_input.shape[1] != 5:
+            raise ValueError(f"TSCUNet requires exactly 5 frames for temporal processing, got {test_input.shape[1]} frames")
+        
+        if test_input.shape[1] != model.clip_size:
+            raise ValueError(f"Input clip size {test_input.shape[1]} does not match model clip size {model.clip_size}")
+
+        # Print input shape information
+        print(f"\nInput shape details:")
+        print(f"Input shape: {test_input.shape} (batch, time, channels, height, width)")
+        
+        # Get PyTorch output
+        model.eval()
+        with torch.inference_mode():
+            torch_output = model(test_input).cpu().numpy()
+
+        # Load and verify ONNX model
+        onnx_model = onnx.load(onnx_path)
+        onnx.checker.check_model(onnx_model)
+        
+        # Create ONNX Runtime session
+        ort_session = ort.InferenceSession(
+            onnx_path,
+            providers=["CPUExecutionProvider"]
+        )
+        
+        # Print ONNX input details
+        print("\nONNX model inputs:")
+        for i, input_info in enumerate(ort_session.get_inputs()):
+            print(f"  Input #{i}: name={input_info.name}, shape={input_info.shape}, type={input_info.type}")
+        
+        # Prepare input for ONNX Runtime
+        ort_inputs = {
+            ort_session.get_inputs()[0].name: test_input.cpu().numpy()
+        }
+        
+        # Run ONNX model - get first output from the list
+        onnx_outputs = ort_session.run(None, ort_inputs)
+        onnx_output = onnx_outputs[0]  # Extract the first output tensor
+
+        # Print detailed shape information
+        print(f"\nOutput shape comparison:")
+        print(f"PyTorch output shape: {torch_output.shape}")
+        print(f"ONNX output shape: {onnx_output.shape}")
+
+        # Compare outputs with more detailed statistics
+        try:
+            # Overall comparison
+            np.testing.assert_allclose(
+                torch_output,
+                onnx_output,
+                rtol=rtol,
+                atol=atol
+            )
+            
+            # Additional temporal-aware statistics
+            abs_diff = np.abs(torch_output - onnx_output)
+            max_diff = np.max(abs_diff)
+            
+            print("\nDetailed verification statistics:")
+            print(f"✓ Maximum absolute difference: {max_diff:.6f}")
+            print("✓ ONNX output verified against PyTorch output successfully.")
+            
+            if save_outputs and max_diff > rtol:
+                # Save problematic regions for investigation
+                worst_indices = np.unravel_index(np.argmax(abs_diff), abs_diff.shape)
+                print(f"\nLargest difference at index: {worst_indices}")
+                print(f"PyTorch value: {torch_output[worst_indices]}")
+                print(f"ONNX value: {onnx_output[worst_indices]}")
+            
+            return True
+            
+        except AssertionError as e:
+            print(f"\n⚠ ONNX verification completed with warnings:")
+            print(f"  {str(e)}")
+            return False
+            
+    except ImportError:
+        print("⚠ ONNX Runtime not installed. Skipping verification.")
+        return False
+    except Exception as e:
+        print(f"❌ Error during ONNX verification: {str(e)}")
+        return False
+
+def convert_tscunet_to_onnx(model_path, onnx_path, clip_size=5, input_shape=None, dynamic=False, optimize=True, verify=True):
     """
     Convert a TSCUNet PyTorch model to ONNX format
     Args:
@@ -160,6 +266,9 @@ def convert_tscunet_to_onnx(model_path, onnx_path, clip_size=5, input_shape=None
     
     print(f"Using input shape: {input_shape}")
     
+    # Create dummy input with exactly 5 frames
+    dummy_input = torch.randn(*input_shape, dtype=torch.float32, device=device)
+    
     # Create export wrapper
     if optimize:
         export_model = TSCUNetExportWrapper(model)
@@ -180,17 +289,25 @@ def convert_tscunet_to_onnx(model_path, onnx_path, clip_size=5, input_shape=None
     # Export the model
     print(f"Exporting model to ONNX: {onnx_path}")
 
-    # Create dummy input
+    # Set default input shape if not provided
+    if input_shape is None:
+        # Use a smaller resolution for export to reduce memory usage
+        height, width = 256, 256
+        input_shape = (1, clip_size, 3, height, width)  # Ensure clip_size matches model
+    
+    print(f"Using input shape: {input_shape}")
+    
+    # Create dummy input with proper temporal dimension
     dummy_input = torch.randn(*input_shape, dtype=torch.float32, device=device)
 
     try:
         torch.onnx.export(
-            export_model,              # model being run
-            dummy_input,               # model input
-            onnx_path,                 # where to save the model
-            export_params=True,        # store the trained parameter weights
-            opset_version=17,          # ONNX version
-            do_constant_folding=True,  # optimize constants
+            export_model,              
+            dummy_input,               
+            onnx_path,                 
+            export_params=True,        
+            opset_version=17,          
+            do_constant_folding=True,  
             input_names=['input'],     
             output_names=['output'],   
             dynamic_axes=dynamic_axes, 
@@ -198,13 +315,19 @@ def convert_tscunet_to_onnx(model_path, onnx_path, clip_size=5, input_shape=None
         )
         
         print(f"Model successfully exported to {onnx_path}")
-        
-        # Verify the model
+
+        # Run verification only once if verify=True
+        if verify:
+            verify_onnx_output(export_model, onnx_path, dummy_input)
+        else:
+            print("Skipping verification step")
+
+        # Verify the model structure (this is different from output verification)
         try:
             import onnx
             onnx_model = onnx.load(onnx_path)
             onnx.checker.check_model(onnx_model)
-            print("ONNX model is valid!")
+            print("ONNX model structure is valid!")
         except ImportError:
             print("ONNX package not installed. Skipping validation.")
         except Exception as e:
@@ -224,7 +347,7 @@ if __name__ == "__main__":
     parser.add_argument("--batch", type=int, default=1, help="Batch size")
     parser.add_argument("--dynamic", action="store_true", help="Use dynamic axes")
     parser.add_argument("--no-optimize", action="store_true", help="Don't use optimized wrapper")
-    
+    parser.add_argument("--no-verify", action="store_true", help="Skip ONNX output verification")
     args = parser.parse_args()
     
     # Set default output path if not specified
@@ -251,5 +374,6 @@ if __name__ == "__main__":
         clip_size,
         input_shape,
         args.dynamic,
-        not args.no_optimize
+        not args.no_optimize,
+        not args.no_verify  # Pass verification flag
     )

@@ -233,6 +233,9 @@ def main():
         video_encoder.join()
         if idx > 0:
             print(f"Saved video to {E_path}")
+            # Print hyperlink to output directory instead of file
+            output_dir = os.path.dirname(os.path.abspath(E_path))
+            print(f"\033]8;;file://{output_dir}\033\\Click to open output directory\033]8;;\033\\")
     if video_input:
         video_decoder.stop()
         video_decoder.join()
