@@ -3,6 +3,7 @@ einops
 thop
 timm
 torch
+matplotlib
 numpy
 opencv-python
 onnx
