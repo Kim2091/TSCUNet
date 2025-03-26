@@ -7,5 +7,5 @@ matplotlib
 numpy
 opencv-python
 onnx
-onnxruntime
+onnxruntime-gpu
 onnxconverter-common
