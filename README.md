@@ -29,8 +29,6 @@ ONNX Model Conversion and Testing
 ----------
 I added this on to hopefully allow for TensorRT or DirectML support in the near future. Having easy ONNX conversion should make implementing this easier.
 
-However, __it does NOT work right__. Do not use ONNX inference or conversion currently. The temporal component is broken.
-
 1. Convert PyTorch model to ONNX format
 
     ```bash
