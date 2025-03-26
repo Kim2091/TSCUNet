@@ -179,7 +179,10 @@ def convert_tscunet_to_onnx(model_path, onnx_path, clip_size=5, input_shape=None
     
     # Export the model
     print(f"Exporting model to ONNX: {onnx_path}")
-    
+
+    # Create dummy input
+    dummy_input = torch.randn(*input_shape, dtype=torch.float32, device=device)
+
     try:
         torch.onnx.export(
             export_model,              # model being run
