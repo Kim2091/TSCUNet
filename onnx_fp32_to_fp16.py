@@ -17,7 +17,7 @@ def convert_to_fp16(model_path, output_path=None):
         onnx_model_fp16 = float16.convert_float_to_float16(
             onnx_model, 
             keep_io_types=True,
-            op_block_list=['Pad', 'Concat', 'Resize']
+            op_block_list=['Pad', 'Resize']
         )
         
         print(f"Saving to {output_path}")
