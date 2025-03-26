@@ -19,31 +19,31 @@ This is a simple guide to help you use TSCUNet for video upscaling.
    pip install -r requirements.txt
    ```
 
-## Basic Usage
+## Using the GUI
 
-### Upscaling Videos
-```
-python test_vsr.py --model_path model.pth --input path/to/video.mp4 --output path/to/output.mp4
-```
+For easy use, you can launch the graphical interface:
 
-### Upscaling Images
 ```
-python test_sisr.py --model_path pretrained_models/scunet_color_real_psnr.pth --input example/lr/ --output example/sr/ --depth 16
+python vsr_gui.py
 ```
 
-## Input/Output Options
+### GUI Features
 
-- You can input a folder of images or a video file
-- To save the result as a video, add the `--video` argument with the codec (like `--video libx264`)
-- Use `--presize` to automatically resize input to match your desired output size/ratio
+1. **Input Video**: Drop your video file or click to browse and select one.
 
-### Example: Upscale a video with better quality
-```
-python test_vsr.py --model_path pretrained_models/tscu_2x.pth --input example/lr_video.mp4 --output example/sr_video.mp4 --video libx264 --presize
-```
+2. **Model Selection**: Choose between PyTorch (.pth) or ONNX (.onnx) models and select the appropriate model file.
 
-That's it!
+3. **Output**: Specify where to save the upscaled video.
 
+4. **Options**:
+   - **Presize**: Automatically resize the input to match your desired output ratio, which can improve quality.
+   - **Video Codec**: Select from common codecs like h264_nvenc (NVIDIA GPU), libx264 (CPU), or specify a custom one.
+
+5. **Processing**: Click "Process Video" to start upscaling. A progress bar will show the status, and you can monitor the details in the log area.
+
+6. **Stop Processing**: If needed, you can stop an ongoing process.
+
+That's it! The GUI provides a simple way to access all the functionality without needing to remember command-line options.
 
 # Advanced Information
 ---------
