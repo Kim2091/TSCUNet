@@ -26,24 +26,25 @@ For easy use, you can launch the graphical interface:
 ```
 python vsr_gui.py
 ```
+![image](https://github.com/user-attachments/assets/f750d416-1d25-499f-a4d7-d48488ba5811)
 
 ### GUI Features
 
 1. **Input Video**: Drop your video file or click to browse and select one.
 
-2. **Model Selection**: Choose between PyTorch (.pth) or ONNX (.onnx) models and select the appropriate model file.
+2. **Model Selection**: Choose the model you wish to use. Use PyTorch unless you know what you're doing.
 
 3. **Output**: Specify where to save the upscaled video.
 
 4. **Options**:
-   - **Presize**: Automatically resize the input to match your desired output ratio, which can improve quality.
-   - **Video Codec**: Select from common codecs like h264_nvenc (NVIDIA GPU), libx264 (CPU), or specify a custom one.
+   - **Presize**: Resizes the video by the model scale. So if you're using a 2x model, it would downscale the video by 50%. This can improve quality in some cases, and always improves performance.
+   - **Video Codec**: Select the codec to use. Just use `libx264` if you're unsure.
 
 5. **Processing**: Click "Process Video" to start upscaling. A progress bar will show the status, and you can monitor the details in the log area.
 
-6. **Stop Processing**: If needed, you can stop an ongoing process.
+6. **Stop Processing**: If needed, you can stop the upscale. This is currently broken.
 
-That's it! The GUI provides a simple way to access all the functionality without needing to remember command-line options.
+That's it!
 
 # Advanced Information
 ---------
