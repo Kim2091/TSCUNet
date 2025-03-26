@@ -6,13 +6,18 @@ import argparse
 import time
 from glob import glob
 import math
-import torch
 from datetime import timedelta
 from fractions import Fraction
 
 from utils.utils_video import VideoDecoder, VideoEncoder
 from utils import utils_image as util
 
+import logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
 
 def load_frames(input_dir, clip_size, height=None, width=None):
     """Load a sequence of frames from a directory"""
@@ -71,7 +76,7 @@ def run_inference(onnx_model_path, input_frames, verbose=True):
     """Run inference on a set of input frames using the ONNX model"""
     # Create ONNX Runtime session
     if verbose:
-        print(f"Loading ONNX model from {onnx_model_path}")
+        logging.info(f"Loading ONNX model from {onnx_model_path}")
     
     # Set session options
     sess_options = ort.SessionOptions()
@@ -83,27 +88,60 @@ def run_inference(onnx_model_path, input_frames, verbose=True):
     
     # Get model metadata
     if verbose:
-        print(f"Model inputs: {session.get_inputs()}")
-        print(f"Model outputs: {session.get_outputs()}")
+        logging.info(f"Model inputs: {session.get_inputs()}")
+        logging.info(f"Model outputs: {session.get_outputs()}")
     
     # Prepare input
     input_name = session.get_inputs()[0].name
     input_shape = session.get_inputs()[0].shape
     
     if verbose:
-        print(f"Expected input shape: {input_shape}")
-        print(f"Actual input shape: {input_frames.shape}")
+        logging.info(f"Expected input shape: {input_shape}")
+        logging.info(f"Actual input shape: {input_frames.shape}")
     
-    # Run inference
+    # Initialize sliding window processing
+    input_window = []
+    outputs_list = []
     start_time = time.time()
-    outputs = session.run(None, {input_name: input_frames})
+    
+    # Get center frame index for consistent output selection
+    clip_size = input_shape[1]  # Get clip size from model input shape
+    center_idx = clip_size // 2
+    
+    # Process frames with sliding window
+    for i in range(len(input_frames)):
+        # Add new frame to window
+        input_window.append(input_frames[i])
+        
+        # Wait until we have enough frames
+        if len(input_window) < clip_size:
+            continue
+            
+        # Create input tensor from window
+        window_tensor = np.stack(input_window, axis=0)
+        window_tensor = np.expand_dims(window_tensor, axis=0)  # Add batch dimension
+        
+        # Run inference
+        outputs = session.run(None, {input_name: window_tensor})
+        
+        # Select center frame from output (matching PyTorch behavior)
+        center_output = outputs[0][0, center_idx]
+        outputs_list.append(center_output)
+        
+        # Remove oldest frame to maintain sliding window
+        input_window.pop(0)
+    
+    # Stack all outputs
+    final_output = np.stack(outputs_list, axis=0)
+    final_output = np.expand_dims(final_output, axis=0)  # Add batch dimension back
+    
     inference_time = time.time() - start_time
     
     if verbose:
-        print(f"Inference completed in {inference_time:.4f} seconds")
-        print(f"Output shape: {outputs[0].shape}")
+        logging.info(f"Inference completed in {inference_time:.4f} seconds")
+        logging.info(f"Output shape: {final_output.shape}")
     
-    return outputs[0], inference_time
+    return final_output, inference_time
 
 
 def main():
@@ -143,7 +181,7 @@ def main():
     E_path = args.output  # Output path
 
     if not L_path or not os.path.exists(L_path):
-        print('Error: input path does not exist.')
+        logging.error('Error: input path does not exist.')
         return
     
     # Check if input is a video file
@@ -154,7 +192,7 @@ def main():
                                          'mxf', 'roq', 'nsv', 'f4v', 'f4p', 'f4a', 'f4b']:
         video_input = True
         if not args.video:
-            print('Error: input video requires --video to be set')
+            logging.error('Error: input video requires --video to be set')
             return
     elif os.path.isdir(L_path):
         L_paths = util.get_image_paths(L_path)
@@ -162,7 +200,7 @@ def main():
         L_paths = [L_path]
 
     if args.video and (not E_path or os.path.isdir(E_path)):
-        print('Error: output path must be a single video file')
+        logging.error('Error: output path must be a single video file')
         return
 
     if not os.path.exists(E_path) and os.path.splitext(E_path)[1] == '':
@@ -173,7 +211,7 @@ def main():
     # ----------------------------------------
     # Load ONNX model
     # ----------------------------------------
-    print(f"Loading ONNX model from {model_path}")
+    logging.info(f"Loading ONNX model from {model_path}")
     
     # Set up providers
     providers = [p.strip() for p in args.providers.split(',')]
@@ -190,7 +228,7 @@ def main():
     input_shape = session.get_inputs()[0].shape
     
     # Determine clip size from model input shape
-    print(f"Model input shape: {input_shape}")
+    logging.info(f"Model input shape: {input_shape}")
     
     # For temporal models, clip size is in the time dimension (dim 1 after batch)
     # Handle both static and dynamic shapes
@@ -207,23 +245,22 @@ def main():
     test_height = input_height_required if input_height_required else 256
     test_width = input_width_required if input_width_required else 256
     
-    print(f"Creating test input with shape (1, {clip_size}, 3, {test_height}, {test_width})")
-    
-    # Create test input with appropriate temporal shape
+    # In the test inference section:
+    logging.info(f"Creating test input with shape (1, {clip_size}, 3, {test_height}, {test_width})")
     test_input = np.zeros((1, clip_size, 3, test_height, test_width), dtype=np.float32)
-    
-    # Run test inference to determine scale factor
     test_output = session.run(None, {input_name: test_input})[0]
-    print(f"Test output shape: {test_output.shape}")
+    logging.info(f"Test output shape: {test_output.shape}")
+
+    # Calculate scale factor based on spatial dimensions only
+    if len(test_output.shape) == 5:  # NTCHW format
+        scale = test_output.shape[3] // test_height
+    elif len(test_output.shape) == 4:  # NCHW format
+        scale = test_output.shape[2] // test_height
     
-    # Calculate scale factor based on output shape
-    # For temporal models, compare output height to input height
-    scale = test_output.shape[3] // test_height
-    
-    print(f"Model: {model_name}")
-    print(f"Clip size: {clip_size}")
-    print(f"Scale: {scale}x")
-    print(f"Output shape from test: {test_output.shape}")
+    logging.info(f"Model: {model_name}")
+    logging.info(f"Clip size: {clip_size}")
+    logging.info(f"Scale: {scale}x")
+    logging.info(f"Output shape from test: {test_output.shape}")
 
     # ----------------------------------------
     # Configure video decoder and resolution
@@ -255,7 +292,7 @@ def main():
             first_img = util.imread_uint(L_paths[0], n_channels=n_channels)
             input_height, input_width = first_img.shape[:2]
         else:
-            print('Error: no input images found.')
+            logging.error('Error: no input images found.')
             return
 
     # Calculate output resolution if not manually specified
@@ -272,8 +309,8 @@ def main():
     else:
         output_res = args.res
 
-    print(f"Input resolution: {input_width}x{input_height}")
-    print(f"Output resolution: {output_res}")
+    logging.info(f"Input resolution: {input_width}x{input_height}")
+    logging.info(f"Output resolution: {output_res}")
 
     # ----------------------------------------
     # Process video/images
@@ -359,8 +396,15 @@ def main():
             if len(input_window) < clip_size and end_of_video:
                 # no more frames to process
                 break
-            elif len(input_window) < clip_size:
+            elif len(input_window) < clip_size // 2 + 1:
                 # wait for more frames
+                continue
+            elif len(input_window) == clip_size // 2 + 1:
+                # reflect pad the beginning of the window
+                input_window = input_window[1:][::-1] + input_window
+
+            if len(input_window) < clip_size:
+                # still waiting for more frames
                 continue
 
             # ------------------------------------
@@ -368,53 +412,61 @@ def main():
             # ------------------------------------
             # Stack frames together for temporal model
             window_np = np.stack(input_window[:clip_size], axis=0)
-            
+
             # Add batch dimension
             window_np = np.expand_dims(window_np, axis=0)
-            
-            # Check if we need to resize to match model's expected input dimensions
+
+            # Ensure dimensions are multiples of 64 (padding)
             curr_height, curr_width = window_np.shape[3], window_np.shape[4]
-            
-            # Get required dimensions (if specified in the model)
-            required_height = input_height_required if input_height_required else curr_height
-            required_width = input_width_required if input_width_required else curr_width
-            
-            # Resize if needed
-            if curr_height != required_height or curr_width != required_width:
-                print(f"Resizing input from {curr_height}x{curr_width} to {required_height}x{required_width}")
-                
-                # Create a new array with the required dimensions
-                resized_window = np.zeros((1, clip_size, 3, required_height, required_width), dtype=np.float32)
-                
-                # For each frame in the clip
-                for i in range(clip_size):
-                    # Get the frame, reshape to HWC for OpenCV
-                    frame = np.transpose(window_np[0, i], (1, 2, 0))  # CHW -> HWC
-                    
-                    # Resize with OpenCV
-                    resized_frame = cv2.resize(frame, (required_width, required_height), 
-                                             interpolation=cv2.INTER_CUBIC)
-                    
-                    # Convert back to CHW and store
-                    resized_window[0, i] = np.transpose(resized_frame, (2, 0, 1))  # HWC -> CHW
-                
-                window_np = resized_window
+            pad_height = -(-curr_height // 64) * 64  # Ceiling division
+            pad_width = -(-curr_width // 64) * 64
+
+            pad_height += 64
+            pad_width += 64
+
+            # Create padded array
+            padded_window = np.zeros((1, clip_size, 3, pad_height, pad_width), dtype=np.float32)
+
+            # For each frame in the clip
+            for i in range(clip_size):
+                frame = window_np[0, i]  # CHW format
+                # Calculate padding
+                pad_h = (pad_height - curr_height) // 2
+                pad_w = (pad_width - curr_width) // 2
+                # Pad using reflection
+                padded_window[0, i] = np.pad(frame, 
+                                            ((0, 0),  # channels
+                                            (pad_h, pad_height - curr_height - pad_h),  # height
+                                            (pad_w, pad_width - curr_width - pad_w)),  # width
+                                            mode='reflect')
 
             # Run ONNX inference
-            outputs = session.run(None, {input_name: window_np.astype(np.float32)})
-            
-            # For temporal models, we typically use the center frame of the output sequence
-            # Handle different output formats (with or without time dimension)
-            if len(outputs[0].shape) > 4 and outputs[0].shape[1] > 1:
-                # If output has time dimension with multiple frames, get center frame
-                center_idx = outputs[0].shape[1] // 2
-                img_E_np = outputs[0][0, center_idx]
-            else:
-                # Otherwise, just take the first frame
+            outputs = session.run(None, {input_name: padded_window.astype(np.float32)})
+
+            # Debug output shapes
+            if idx == 0:  # Only on first frame
+                logging.info(f"Original input shape: {window_np.shape}")
+                logging.info(f"Padded input shape: {padded_window.shape}")
+                logging.info(f"Output shape before unpad: {outputs[0].shape}")
+                logging.info(f"Final output shape: ({curr_height * scale}, {curr_width * scale})")
+
+            # Select center frame from temporal output
+            if len(outputs[0].shape) > 4:  # Temporal output (NTCHW)
+                center_idx = clip_size // 2
+                img_E_np = outputs[0][0, center_idx]  # Take center frame
+            else:  # Non-temporal output (NCHW)
                 img_E_np = outputs[0][0]  # Remove batch dimension
-            
-            # remove the oldest frame from the window for sliding window processing
+
             input_window.pop(0)
+
+            # Unpad the output
+            if len(img_E_np.shape) == 3:  # CHW format
+                h_start = (img_E_np.shape[1] - curr_height * scale) // 2
+                h_end = h_start + curr_height * scale
+                w_start = (img_E_np.shape[2] - curr_width * scale) // 2
+                w_end = w_start + curr_width * scale
+                img_E_np = img_E_np[:, h_start:h_end, w_start:w_end]            
+
 
             # ------------------------------------
             # (3) Post-process output
@@ -448,46 +500,41 @@ def main():
             idx += 1
             time_remaining = ((total_time / idx) * (img_count - idx)) / 1000
 
+            # For the progress/FPS counter, keep using print:
             print(f'{idx}/{img_count}   fps: {1000/time_taken:.2f}  frame time: {time_taken:.2f}ms   time remaining: {math.trunc(time_remaining/3600)}h{math.trunc((time_remaining/60)%60)}m{math.trunc(time_remaining%60)}s ', end='\r')
-    
+                
     except KeyboardInterrupt:
-        print("\nCaught KeyboardInterrupt, ending gracefully")
+        logging.info("\nCaught KeyboardInterrupt, ending gracefully")
     except Exception as e:
-        print("\n" + str(e))
+        logging.error(f"\nError: {str(e)}")
     finally:
         # Clean up resources
-        if video_encoder is not None:
+        if video_input and video_decoder is not None:
             try:
-                video_encoder.stop()
-                # Add timeout to join to prevent hanging
-                video_encoder.join(timeout=5)
-                if idx > 0:
-                    print(f"Saved video to {E_path}")
-            except Exception as e:
-                print(f"Error while closing video encoder: {e}")
-            finally:
-                # Force close the output container if still open
-                if hasattr(video_encoder, 'output_container') and video_encoder.output_container:
-                    try:
-                        video_encoder.output_container.close()
-                    except:
-                        pass
+                video_decoder.stop()
+            except:
+                pass
 
         if video_encoder is not None:
             try:
                 video_encoder.stop()
                 # Add timeout to join to prevent hanging
                 video_encoder.join(timeout=5)
+                
+                # Force close the output container if still open
+                if hasattr(video_encoder, 'output_container') and video_encoder.output_container:
+                    video_encoder.output_container.close()
+                
                 if idx > 0:
-                    print(f"Saved video to {E_path}")
-                    # Print hyperlink to output directory instead of file
+                    logging.info(f"Saved video to {E_path}")
+                    # Print hyperlink to output directory
                     output_dir = os.path.dirname(os.path.abspath(E_path))
                     print(f"\033]8;;file://{output_dir}\033\\Click to open output directory\033]8;;\033\\")
             except Exception as e:
-                print(f"Error while closing video encoder: {e}")
+                logging.error(f"Error while closing video encoder: {e}")
 
         if idx > 0:
-            print(f'Processed {idx} images in {timedelta(milliseconds=total_time)}, average {total_time / idx:.2f}ms per image              ')
+            logging.info(f'Processed {idx} images in {timedelta(milliseconds=total_time)}, average {total_time / idx:.2f}ms per image')
 
         # Force exit to ensure all threads are terminated
         os._exit(0)

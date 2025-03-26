@@ -7,7 +7,7 @@ import math
 from models.network_tscunet import TSCUNet
 
 class TSCUNetExportWrapper(torch.nn.Module):
-    """Wrapper for TSCUNet"""
+    """Wrapper for TSCUNet that maintains closer compatibility with original implementation"""
     def __init__(self, model):
         super(TSCUNetExportWrapper, self).__init__()
         self.model = model
@@ -15,6 +15,7 @@ class TSCUNetExportWrapper(torch.nn.Module):
         self.scale = model.scale
         self.dim = model.dim
         self.residual = model.residual
+        self.sigma = model.sigma
         
         # Move required components into this wrapper
         self.m_head = model.m_head
@@ -23,104 +24,90 @@ class TSCUNetExportWrapper(torch.nn.Module):
             self.m_res = model.m_res
         self.m_upsample = model.m_upsample
         self.m_tail = model.m_tail
-    
+        
+        # Add sigma components if present
+        if self.sigma:
+            self.m_sigma = model.m_sigma
+            self.m_sigma_tail = model.m_sigma_tail
+        
     def forward(self, x):
-        # Get dimensions without unpacking tensor to avoid tracer errors
-        b = x.shape[0]
-        t = x.shape[1]
-        c = x.shape[2]
-        h = x.shape[3]
-        w = x.shape[4]
+        b, t, c, h, w = x.size()
+        if t != self.clip_size:
+            raise ValueError(
+                f"input clip size {t} does not match model clip size {self.clip_size}"
+            )
+
+        # Calculate padding - using integer division instead of numpy for ONNX compatibility
+        paddingH = -(-h // 64) * 64 - h  # Equivalent to ceil(h/64)*64 - h
+        paddingW = -(-w // 64) * 64 - w  # Equivalent to ceil(w/64)*64 - w
         
-        # Calculate padding with fixed math (no numpy)
-        mult = 64
-        paddingH = ((h + mult - 1) // mult) * mult - h
-        paddingW = ((w + mult - 1) // mult) * mult - w
-        
-        # Add extra padding for evaluation mode
+        # Add extra padding for evaluation mode (always true for ONNX export)
         paddingH += 64
         paddingW += 64
         
-        # Calculate padding on each side
-        paddingLeft = paddingW // 2
-        paddingRight = paddingW - paddingLeft
-        paddingTop = paddingH // 2
-        paddingBottom = paddingH - paddingTop
-        
-        # Reshape and pad the input - CRITICAL FIX: proper reshaping
-        x_reshaped = x.reshape(b * t, c, h, w)  # Flatten batch and time dimensions
-        x_padded = torch.nn.functional.pad(
-            x_reshaped, 
-            (paddingLeft, paddingRight, paddingTop, paddingBottom),
-            mode='reflect'
-        )
+        paddingLeft = math.ceil(paddingW / 2)
+        paddingRight = math.floor(paddingW / 2)
+        paddingTop = math.ceil(paddingH / 2)
+        paddingBottom = math.floor(paddingH / 2)
         
         # Process through head
-        x_processed = self.m_head(x_padded)
+        x = (
+            self.m_head(
+                torch.nn.functional.pad(
+                    x.view(-1, c, h, w),
+                    (paddingLeft, paddingRight, paddingTop, paddingBottom),
+                    mode='reflect'
+                ).to(memory_format=torch.channels_last)
+            )
+            .to(memory_format=torch.contiguous_format)
+            .view(b, -1, self.dim, h + paddingH, w + paddingW)
+        )
         
-        # Reshape back to include batch and time dimensions
-        h_padded = h + paddingH
-        w_padded = w + paddingW
-        x = x_processed.reshape(b, t, self.dim, h_padded, w_padded)
         x1 = x
-
-        # For TSCUNet, we need to handle the specific layer processing differently
-        if t > 2:  # Only process if we have enough frames
-            layer_idx = 0  # Track which layer we're using
-            temp_outputs = []
-            
-            # Process through each window of 3 frames
-            for i in range(t - 2):
-                # Extract 3 consecutive frames
-                frame_window = x1[:, i:i+3]
-                
-                # Reshape properly for the layer
-                frame_window_reshaped = frame_window.reshape(b, 3 * self.dim, h_padded, w_padded)
-                
-                # Use the specific layer for this position
-                layer_idx = i % len(self.m_layers)  # In case t-2 > number of layers
-                layer_output = self.m_layers[layer_idx](frame_window_reshaped)
-                temp_outputs.append(layer_output)
-            
-            # Stack outputs along time dimension
-            if len(temp_outputs) > 1:
-                x1 = torch.stack(temp_outputs, dim=1)  # Shape: [b, t-2, dim, h_padded, w_padded]
-            else:
-                x1 = temp_outputs[0].unsqueeze(1)  # For the case when t-2 = 1
-            
-            # Squeeze time dimension if it's 1
-            if x1.shape[1] == 1:
-                x1 = x1.squeeze(1)  # Shape: [b, dim, h_padded, w_padded]
-            else:
-                # If multiple time steps, take the center one
-                x1 = x1[:, (x1.shape[1]-1)//2]  # Shape: [b, dim, h_padded, w_padded]
-        else:
-            # Handle edge case with fewer frames
-            raise ValueError(f"Input requires at least 3 frames but got {t}")
         
-        # Apply residual connection if model has it
+        # Process through temporal layers
+        for layer in self.m_layers:
+            temp = [None] * (t - 2)
+            for i in range(t - 2):
+                temp[i] = layer(
+                    x1[:, i:i+3, ...].reshape(b, -1, h + paddingH, w + paddingW)
+                    .to(memory_format=torch.channels_last)
+                ).to(memory_format=torch.contiguous_format)
+            x1 = torch.stack(temp, dim=1)
+            t = x1.size(1)
+        
+        x1 = x1.squeeze(1).to(memory_format=torch.channels_last)
+        
+        # Apply residual if present
         if self.residual:
-            mid_frame = x[:, self.clip_size//2]  # Shape: [b, dim, h_padded, w_padded]
-            x1 = x1 + self.m_res(mid_frame)
+            x1 = x1 + self.m_res(
+                x[:, self.clip_size//2, ...].to(memory_format=torch.channels_last)
+            )
         
         # Upscale
         x1 = self.m_upsample(x1)
         
+        # Apply sigma branch if present (for inference only)
+        if self.sigma:
+            sigma = self.m_sigma(x1)
+            sigma = self.m_sigma_tail(sigma + x1).to(memory_format=torch.contiguous_format)
+            sigma = sigma[
+                ...,
+                paddingTop * self.scale : paddingTop * self.scale + h * self.scale,
+                paddingLeft * self.scale : paddingLeft * self.scale + w * self.scale,
+            ]
+        
         # Final processing
-        x1 = self.m_tail(x1)
+        x1 = self.m_tail(x1).to(memory_format=torch.contiguous_format)
+        x1 = x1[
+            ...,
+            paddingTop * self.scale : paddingTop * self.scale + h * self.scale,
+            paddingLeft * self.scale : paddingLeft * self.scale + w * self.scale,
+        ]
         
-        # Crop to original dimensions * scale
-        h_out = h * self.scale
-        w_out = w * self.scale
-        padTop_scaled = paddingTop * self.scale
-        padLeft_scaled = paddingLeft * self.scale
-        
-        x1 = x1[:, :, padTop_scaled:padTop_scaled+h_out, padLeft_scaled:padLeft_scaled+w_out]
-        
-        # CRITICAL CHANGE: Force output to be exactly 4D (B, C, H, W)
-        # This ensures ONNX export matches PyTorch output shape
-        x1 = x1.view(b, -1, h_out, w_out)  # Explicit reshaping instead of conditional squeeze
-        
+        # Return appropriate outputs
+        if self.sigma:
+            return x1, sigma
         return x1
 
 def verify_onnx_output(model, onnx_path, test_input, rtol=1e-2, atol=1e-3, save_outputs=False):
@@ -226,7 +213,7 @@ def verify_onnx_output(model, onnx_path, test_input, rtol=1e-2, atol=1e-3, save_
         print(f"❌ Error during ONNX verification: {str(e)}")
         return False
 
-def convert_tscunet_to_onnx(model_path, onnx_path, clip_size=5, input_shape=None, dynamic=False, optimize=True, verify=True):
+def convert_tscunet_to_onnx(model_path, onnx_path, clip_size=5, input_shape=None, dynamic=False, optimize=False, verify=True):
     """
     Convert a TSCUNet PyTorch model to ONNX format
     Args:
