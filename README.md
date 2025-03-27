@@ -51,7 +51,7 @@ To get started, simply:
 1. Clone this repository with `git clone https://github.com/Kim2091/SCUNet` (or download the zip). 
 2. Install PyTorch with CUDA: https://pytorch.org/get-started/locally/
 3. Run `pip install -r requirements.txt`
-4. Use 
+4. Use one of the following:
 
 1. Video/Temporal Inference
 
