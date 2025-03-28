@@ -4,6 +4,8 @@ import argparse
 import os
 import numpy as np
 import math
+import onnx
+from onnxconverter_common import float16
 from models.network_tscunet import TSCUNet
 
 class TSCUNetExportWrapper(torch.nn.Module):
@@ -213,7 +215,33 @@ def verify_onnx_output(model, onnx_path, test_input, rtol=1e-2, atol=1e-3, save_
         print(f"❌ Error during ONNX verification: {str(e)}")
         return False
 
-def convert_tscunet_to_onnx(model_path, onnx_path, clip_size=5, input_shape=None, dynamic=False, optimize=False, verify=True):
+def convert_to_fp16(model_path, output_path=None):
+    """Convert ONNX model to FP16 format"""
+    if output_path is None:
+        # Remove .onnx extension if present
+        base_path = model_path[:-5] if model_path.endswith('.onnx') else model_path
+        output_path = f"{base_path}_fp16.onnx"
+    
+    print(f"\nConverting model to FP16...")
+    print(f"Loading ONNX model from {model_path}")
+    
+    try:
+        onnx_model = onnx.load(model_path)
+        onnx_model_fp16 = float16.convert_float_to_float16(
+            onnx_model, 
+            keep_io_types=True,
+            op_block_list=['Pad', 'Resize']
+        )
+        
+        print(f"Saving FP16 model to {output_path}")
+        onnx.save(onnx_model_fp16, output_path)
+        print("FP16 conversion completed successfully")
+        return True
+    except Exception as e:
+        print(f"Error during FP16 conversion: {e}")
+        return False
+
+def convert_tscunet_to_onnx(model_path, onnx_path, clip_size=5, input_shape=None, dynamic=False, optimize=False, verify=True, fp16=False):
     """
     Convert a TSCUNet PyTorch model to ONNX format
     Args:
@@ -223,6 +251,8 @@ def convert_tscunet_to_onnx(model_path, onnx_path, clip_size=5, input_shape=None
         input_shape: Input shape tuple (batch, clip_size, channels, height, width)
         dynamic: Whether to use dynamic axes for the ONNX model
         optimize: Whether to optimize the model for export
+        verify: Whether to verify the ONNX output
+        fp16: Whether to also create an FP16 version
     """
     print(f"Loading PyTorch model from {model_path}")
     
@@ -273,25 +303,20 @@ def convert_tscunet_to_onnx(model_path, onnx_path, clip_size=5, input_shape=None
             'output': {0: 'batch_size', 2: 'out_height', 3: 'out_width'}
         }
     
-    # Export the model
-    print(f"Exporting model to ONNX: {onnx_path}")
+    # Modify the output path to include fp32/fp16
+    base_path = os.path.splitext(onnx_path)[0]  # Strip any extension
+    if base_path.endswith('.onnx'):  # Handle case where .onnx is part of the name
+        base_path = base_path[:-5]
+    fp32_path = f"{base_path}_fp32.onnx"
 
-    # Set default input shape if not provided
-    if input_shape is None:
-        # Use a smaller resolution for export to reduce memory usage
-        height, width = 256, 256
-        input_shape = (1, clip_size, 3, height, width)  # Ensure clip_size matches model
-    
-    print(f"Using input shape: {input_shape}")
-    
-    # Create dummy input with proper temporal dimension
-    dummy_input = torch.randn(*input_shape, dtype=torch.float32, device=device)
+    # Export the model
+    print(f"Exporting model to ONNX: {fp32_path}")
 
     try:
         torch.onnx.export(
             export_model,              
             dummy_input,               
-            onnx_path,                 
+            fp32_path,                # Use fp32_path instead of onnx_path
             export_params=True,        
             opset_version=17,          
             do_constant_folding=True,  
@@ -301,24 +326,16 @@ def convert_tscunet_to_onnx(model_path, onnx_path, clip_size=5, input_shape=None
             verbose=False
         )
         
-        print(f"Model successfully exported to {onnx_path}")
+        print(f"Model successfully exported to {fp32_path}")
 
-        # Run verification only once if verify=True
+        # Verify the model if requested
         if verify:
-            verify_onnx_output(export_model, onnx_path, dummy_input)
-        else:
-            print("Skipping verification step")
-
-        # Verify the model structure (this is different from output verification)
-        try:
-            import onnx
-            onnx_model = onnx.load(onnx_path)
-            onnx.checker.check_model(onnx_model)
-            print("ONNX model structure is valid!")
-        except ImportError:
-            print("ONNX package not installed. Skipping validation.")
-        except Exception as e:
-            print(f"ONNX validation error: {e}")
+            verify_onnx_output(export_model, fp32_path, dummy_input)
+        
+        # Convert to FP16 if requested
+        if fp16:
+            fp16_path = f"{base_path}_fp16.onnx"
+            convert_to_fp16(fp32_path, fp16_path)
             
     except Exception as e:
         print(f"Error during export: {e}")
@@ -335,14 +352,22 @@ if __name__ == "__main__":
     parser.add_argument("--dynamic", action="store_true", help="Use dynamic axes")
     parser.add_argument("--no-optimize", action="store_true", help="Don't use optimized wrapper")
     parser.add_argument("--no-verify", action="store_true", help="Skip ONNX output verification")
+    parser.add_argument("--fp16", action="store_true", help="Also create FP16 version of the model")
     args = parser.parse_args()
     
     # Set default output path if not specified
     if args.output is None:
+        # Strip any existing extension and use base name only
         base_name = os.path.splitext(os.path.basename(args.model))[0]
         args.output = f"{base_name}.onnx"
+    else:
+        # If output is specified, ensure we strip any extension
+        base_name = os.path.splitext(args.output)[0]
+        if base_name.endswith('.onnx'):  # Handle case where .onnx is part of the name
+            base_name = base_name[:-5]
+        args.output = f"{base_name}.onnx"
     
-    # Get clip_size from model (avoid loading full model twice)
+    # Get clip_size from model
     print("Loading model to determine clip_size...")
     temp_state = torch.load(args.model, map_location='cpu')
     temp_model = TSCUNet(state=temp_state)
@@ -362,5 +387,6 @@ if __name__ == "__main__":
         input_shape,
         args.dynamic,
         not args.no_optimize,
-        not args.no_verify  # Pass verification flag
+        not args.no_verify,
+        args.fp16  # Pass FP16 flag
     )
