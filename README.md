@@ -73,6 +73,11 @@ Additionally, the `--presize` argument can be used to resize the input to the ta
 python test_vsr.py --model_path pretrained_models/tscu_2x.pth --input example/lr_video.mp4 --output example/sr_video.mp4 --video libx264 --presize
 ```
 
+You can also convert an FP32 version of the model to FP16 using `pth_fp32_to_fp16.py`. However, this currently is experimental and comes at the cost of visual quality.
+```bash
+python pth_fp32_to_fp16.py --model path/to/model.pth --output path/to/output.pth
+```
+
 ONNX Model Conversion and Testing
 ----------
 I added this on to hopefully allow for TensorRT or DirectML support in the near future. Having easy ONNX conversion should make implementing this easier.
