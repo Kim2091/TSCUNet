@@ -87,14 +87,9 @@ I added this on to hopefully allow for TensorRT or DirectML support in the near 
     - `--height`, `--width`: Outputs a static onnx. Good for upscaling videos of specific resolutions. Specify input dimensions (e.g. 256)
     - `--batch`: Set batch size. Don't mess with this (default: 1)
     - `--no-optimize`: Disable optimization wrapper
+    - `--fp16`: Converts the model to fp16, which provides a speed boost
 
-2. Convert ONNX model to FP16 (provides a small speed boost)
-
-    ```bash
-    python onnx_fp32_to_fp16.py --model model.onnx --output model_fp16.onnx
-    ```
-
-3. Run the model
+2. Run the model
 
     For upscaling video:
     ```bash
