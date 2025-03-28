@@ -43,8 +43,8 @@ def convert_to_fp16(input_model_path, output_model_path=None):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Convert PyTorch model from FP32 to FP16")
-    parser.add_argument("input_model", help="Path to the input FP32 model")
-    parser.add_argument("--output_model", help="Path to save the FP16 model (optional)")
+    parser.add_argument("--model", type=str, required=True, help="Path to the input FP32 model")
+    parser.add_argument("--output", type=str, help="Path to save the FP16 model (optional)")
     args = parser.parse_args()
     
-    convert_to_fp16(args.input_model, args.output_model)
+    convert_to_fp16(args.model, args.output)
