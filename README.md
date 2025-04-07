@@ -20,7 +20,7 @@ This is a simple guide to help you use TSCUNet for video upscaling.
 
 ## TensorRT
 TensorRT support has been added thanks to [pifroggi](https://github.com/pifroggi)!
-Refer to the [TensorRT guide](https://github.com/Kim2091/SCUNet/tensorrt/README.md) on how to use it.
+Refer to the [TensorRT guide](https://github.com/Kim2091/SCUNet/blob/main/tensorrt/README.md) on how to use it.
 
 ## Using the GUI (No TRT support)
 
