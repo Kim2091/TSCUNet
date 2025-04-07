@@ -84,7 +84,9 @@ python pth_fp32_to_fp16.py --model path/to/model.pth --output path/to/output.pth
 
 ONNX Model Conversion and Testing
 ----------
-I added this on to hopefully allow for TensorRT or DirectML support in the near future. Having easy ONNX conversion should make implementing this easier.
+TensorRT support has been added. The main reason for converting to ONNX would be for usage with TRT.
+
+Please note that on April 7 2025, a breaking change was pushed that renders all existing TSCUNet ONNX models incompatible. You must re-convert them using the updated `convert_to_onnx.py` script.
 
 1. Convert PyTorch model to ONNX format
 

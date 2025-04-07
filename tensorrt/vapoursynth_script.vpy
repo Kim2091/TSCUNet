@@ -13,7 +13,7 @@ pad_r = (((w + 63) // 64) * 64) - w
 pad_b = (((h + 63) // 64) * 64) - h
 clip = core.std.AddBorders(clip, right=pad_r, bottom=pad_b)
 
-# convert to RGBS for vsmlrt
+# convert to RGBS for vsmlrt. Use RGBH if running an FP16 model
 clip = core.resize.Bilinear(clip, format=vs.RGBS, matrix_in_s="470bg")
 
 # inference with 5 input frames

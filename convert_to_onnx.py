@@ -33,6 +33,10 @@ class TSCUNetExportWrapper(torch.nn.Module):
             self.m_sigma_tail = model.m_sigma_tail
         
     def forward(self, x):
+        b, tc, h, w = x.size() # vsmlrt input shape (batch, clip_size * channels, height, width)
+        channels_per_frame = 3
+        x = x.view(b, self.clip_size, channels_per_frame, h, w) # reshape to (batch, clip_size, channels, height, width)
+        
         b, t, c, h, w = x.size()
         if t != self.clip_size:
             raise ValueError(
@@ -129,18 +133,18 @@ def verify_onnx_output(model, onnx_path, test_input, rtol=1e-2, atol=1e-3, save_
         import onnxruntime as ort
         
         # Verify input shape
-        if len(test_input.shape) != 5:
-            raise ValueError(f"Expected 5D input (batch, time=5, channels, height, width), got shape {test_input.shape}")
+        if len(test_input.shape) != 4:
+            raise ValueError(f"Expected 4D input (batch, time=5 * channels=3, height, width), got shape {test_input.shape}")
         
-        if test_input.shape[1] != 5:
-            raise ValueError(f"TSCUNet requires exactly 5 frames for temporal processing, got {test_input.shape[1]} frames")
+        if test_input.shape[1] != 5 * 3:
+            raise ValueError(f"TSCUNet requires exactly 5 frames for temporal processing, got {test_input.shape[1] / 3} frames")
         
-        if test_input.shape[1] != model.clip_size:
-            raise ValueError(f"Input clip size {test_input.shape[1]} does not match model clip size {model.clip_size}")
+        if test_input.shape[1] / 3 != model.clip_size:
+            raise ValueError(f"Input clip size {test_input.shape[1] / 3} does not match model clip size {model.clip_size}")
 
         # Print input shape information
         print(f"\nInput shape details:")
-        print(f"Input shape: {test_input.shape} (batch, time, channels, height, width)")
+        print(f"Input shape: {test_input.shape} (batch, time * channels, height, width)")
         
         # Get PyTorch output
         model.eval()
@@ -279,7 +283,7 @@ def convert_tscunet_to_onnx(model_path, onnx_path, clip_size=5, input_shape=None
     if input_shape is None:
         # Use a smaller resolution for export to reduce memory usage
         height, width = 256, 256
-        input_shape = (1, clip_size, 3, height, width)
+        input_shape = (1, clip_size * 3, height, width)
     
     print(f"Using input shape: {input_shape}")
     
@@ -299,7 +303,7 @@ def convert_tscunet_to_onnx(model_path, onnx_path, clip_size=5, input_shape=None
     if dynamic:
         # Allow batch size, height and width to be dynamic
         dynamic_axes = {
-            'input': {0: 'batch_size', 3: 'height', 4: 'width'},
+            'input': {0: 'batch_size', 2: 'height', 3: 'width'},
             'output': {0: 'batch_size', 2: 'out_height', 3: 'out_width'}
         }
     
@@ -352,7 +356,7 @@ if __name__ == "__main__":
     parser.add_argument("--dynamic", action="store_true", help="Use dynamic axes")
     parser.add_argument("--no-optimize", action="store_true", help="Don't use optimized wrapper")
     parser.add_argument("--no-verify", action="store_true", help="Skip ONNX output verification")
-    parser.add_argument("--fp16", action="store_true", help="Also create FP16 version of the model")
+    parser.add_argument("--fp16", action="store_true", help="NOT SUPPORTED. Also create FP16 version of the model")
     args = parser.parse_args()
     
     # Set default output path if not specified
@@ -377,7 +381,7 @@ if __name__ == "__main__":
     gc.collect()
     
     # Define input shape
-    input_shape = (args.batch, clip_size, 3, args.height, args.width)
+    input_shape = (args.batch, clip_size * 3, args.height, args.width)
     
     # Convert the model
     convert_tscunet_to_onnx(
