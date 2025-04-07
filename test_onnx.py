@@ -51,8 +51,9 @@ def preprocess_frames(frames):
     # Transpose to [time, channels, height, width]
     frames_np = np.transpose(frames_np, (0, 3, 1, 2))
     
-    # Add batch dimension
-    frames_np = np.expand_dims(frames_np, axis=0)
+    # Reshape to vsmlrt format [batch, time*channels, height, width]
+    b, t, c, h, w = frames_np.shape
+    frames_np = frames_np.reshape(b, t * c, h, w)
     
     return frames_np
 
@@ -105,7 +106,7 @@ def run_inference(onnx_model_path, input_frames, verbose=True):
     start_time = time.time()
     
     # Get center frame index for consistent output selection
-    clip_size = input_shape[1]  # Get clip size from model input shape
+    clip_size = input_shape[1] // 3  # Get clip size from model input shape (time*channels)
     center_idx = clip_size // 2
     
     # Process frames with sliding window
@@ -119,13 +120,15 @@ def run_inference(onnx_model_path, input_frames, verbose=True):
             
         # Create input tensor from window
         window_tensor = np.stack(input_window, axis=0)
-        window_tensor = np.expand_dims(window_tensor, axis=0)  # Add batch dimension
+        # Reshape to vsmlrt format [batch, time*channels, height, width]
+        b, t, c, h, w = window_tensor.shape
+        window_tensor = window_tensor.reshape(1, t * c, h, w)
         
         # Run inference
         outputs = session.run(None, {input_name: window_tensor})
         
-        # Select center frame from output (matching PyTorch behavior)
-        center_output = outputs[0][0, center_idx]
+        # Select center frame from output
+        center_output = outputs[0][0]  # Output is already in the right format
         outputs_list.append(center_output)
         
         # Remove oldest frame to maintain sliding window
@@ -142,7 +145,6 @@ def run_inference(onnx_model_path, input_frames, verbose=True):
         logging.info(f"Output shape: {final_output.shape}")
     
     return final_output, inference_time
-
 
 def main():
     # ----------------------------------------
@@ -213,6 +215,13 @@ def main():
     # ----------------------------------------
     # Load ONNX model
     # ----------------------------------------
+    # Ensure model path has correct suffix
+    if not model_path.endswith('_fp32.onnx') and not model_path.endswith('_fp16.onnx'):
+        base_path = os.path.splitext(model_path)[0]
+        if base_path.endswith('.onnx'):  # Handle case where .onnx is part of the name
+            base_path = base_path[:-5]
+        model_path = f"{base_path}_fp32.onnx"  # Default to FP32
+    
     logging.info(f"Loading ONNX model from {model_path}")
     
     # Set up providers
@@ -229,34 +238,30 @@ def main():
     input_name = session.get_inputs()[0].name
     input_shape = session.get_inputs()[0].shape
     
-    # Determine clip size from model input shape
-    logging.info(f"Model input shape: {input_shape}")
+    # For temporal models, clip size is now encoded in channels (dim 1 after batch)
+    clip_size = input_shape[1] // 3  # Divide by 3 channels
     
-    # For temporal models, clip size is in the time dimension (dim 1 after batch)
-    # Handle both static and dynamic shapes
-    if len(input_shape) > 4:  # Ensure this is a temporal model (NTCHW format)
-        clip_size = input_shape[1] if not isinstance(input_shape[1], str) and input_shape[1] > 0 else 5  # Default to 5 if dynamic
-    else:
-        raise ValueError("The provided model doesn't appear to be a temporal model (expected NTCHW format)")
-    
-    # Get required input dimensions, handling both fixed and dynamic shapes
-    input_height_required = input_shape[3] if isinstance(input_shape[3], int) and input_shape[3] > 0 else None
-    input_width_required = input_shape[4] if isinstance(input_shape[4], int) and input_shape[4] > 0 else None
+    # Get required input dimensions
+    input_height_required = input_shape[2] if isinstance(input_shape[2], int) and input_shape[2] > 0 else None
+    input_width_required = input_shape[3] if isinstance(input_shape[3], int) and input_shape[3] > 0 else None
     
     # Create test dimensions - use model's required dimensions if specified, otherwise use defaults
     test_height = input_height_required if input_height_required else 256
     test_width = input_width_required if input_width_required else 256
     
-    # In the test inference section:
-    logging.info(f"Creating test input with shape (1, {clip_size}, 3, {test_height}, {test_width})")
-    test_input = np.zeros((1, clip_size, 3, test_height, test_width), dtype=np.float32)
+    # Change this section in main():
+    # ----------------------------------------
+    # Test inference
+    # ----------------------------------------
+    logging.info(f"Creating test input with shape (1, {clip_size * 3}, {test_height}, {test_width})")  # Changed format
+    test_input = np.zeros((1, clip_size * 3, test_height, test_width), dtype=np.float32)  # Changed shape
     test_output = session.run(None, {input_name: test_input})[0]
     logging.info(f"Test output shape: {test_output.shape}")
 
     # Calculate scale factor based on spatial dimensions only
-    if len(test_output.shape) == 5:  # NTCHW format
+    if len(test_output.shape) == 5:  # NTCHW format (shouldn't happen with vsmlrt)
         scale = test_output.shape[3] // test_height
-    elif len(test_output.shape) == 4:  # NCHW format
+    elif len(test_output.shape) == 4:  # NCHW format (expected)
         scale = test_output.shape[2] // test_height
     
     logging.info(f"Model: {model_name}")
@@ -413,51 +418,41 @@ def main():
             # (2) Run inference
             # ------------------------------------
             # Stack frames together for temporal model
-            window_np = np.stack(input_window[:clip_size], axis=0)
+            window_np = np.stack(input_window[:clip_size], axis=0)  # [time, channels, height, width]
+            
+            # Calculate padding dimensions
+            curr_height, curr_width = window_np.shape[2], window_np.shape[3]
+            pad_height = -(-curr_height // 64) * 64 + 64
+            pad_width = -(-curr_width // 64) * 64 + 64
+            pad_h = (pad_height - curr_height) // 2
+            pad_w = (pad_width - curr_width) // 2
 
-            # Add batch dimension
-            window_np = np.expand_dims(window_np, axis=0)
-
-            # Ensure dimensions are multiples of 64 (padding)
-            curr_height, curr_width = window_np.shape[3], window_np.shape[4]
-            pad_height = -(-curr_height // 64) * 64  # Ceiling division
-            pad_width = -(-curr_width // 64) * 64
-
-            pad_height += 64
-            pad_width += 64
-
-            # Create padded array
+            # Pre-allocate padded array in temporal format
             padded_window = np.zeros((1, clip_size, 3, pad_height, pad_width), dtype=np.float32)
-
-            # For each frame in the clip
+            
+            # Pad each frame individually (more efficient for reflection padding)
             for i in range(clip_size):
-                frame = window_np[0, i]  # CHW format
-                # Calculate padding
-                pad_h = (pad_height - curr_height) // 2
-                pad_w = (pad_width - curr_width) // 2
-                # Pad using reflection
-                padded_window[0, i] = np.pad(frame, 
-                                            ((0, 0),  # channels
+                frame = window_np[i]  # CHW format
+                padded_window[0, i] = np.pad(frame,
+                                           ((0, 0),  # channels
                                             (pad_h, pad_height - curr_height - pad_h),  # height
                                             (pad_w, pad_width - curr_width - pad_w)),  # width
-                                            mode='reflect')
+                                           mode='reflect')
 
-            # Run ONNX inference
+            # Now reshape to vsmlrt format after padding
+            padded_window = padded_window.reshape(1, clip_size * 3, pad_height, pad_width)
+
+            # Run inference
             outputs = session.run(None, {input_name: padded_window.astype(np.float32)})
 
             # Debug output shapes
             if idx == 0:  # Only on first frame
                 logging.info(f"Original input shape: {window_np.shape}")
-                logging.info(f"Padded input shape: {padded_window.shape}")
                 logging.info(f"Output shape before unpad: {outputs[0].shape}")
                 logging.info(f"Final output shape: ({curr_height * scale}, {curr_width * scale})")
 
-            # Select center frame from temporal output
-            if len(outputs[0].shape) > 4:  # Temporal output (NTCHW)
-                center_idx = clip_size // 2
-                img_E_np = outputs[0][0, center_idx]  # Take center frame
-            else:  # Non-temporal output (NCHW)
-                img_E_np = outputs[0][0]  # Remove batch dimension
+            # Output is already in NCHW format
+            img_E_np = outputs[0][0]  # Remove batch dimension
 
             input_window.pop(0)
 
@@ -467,8 +462,7 @@ def main():
                 h_end = h_start + curr_height * scale
                 w_start = (img_E_np.shape[2] - curr_width * scale) // 2
                 w_end = w_start + curr_width * scale
-                img_E_np = img_E_np[:, h_start:h_end, w_start:w_end]            
-
+                img_E_np = img_E_np[:, h_start:h_end, w_start:w_end]
 
             # ------------------------------------
             # (3) Post-process output

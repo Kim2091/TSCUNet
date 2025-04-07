@@ -18,9 +18,13 @@ This is a simple guide to help you use TSCUNet for video upscaling.
    pip install -r requirements.txt
    ```
 
-## Using the GUI
+## TensorRT
+TensorRT support has been added thanks to [pifroggi](https://github.com/pifroggi)!
+Refer to the [TensorRT guide](https://github.com/Kim2091/SCUNet/tensorrt/README.md) on how to use it.
 
-For easy use, you can launch the graphical interface:
+## Using the GUI (No TRT support)
+
+For easy use with PyTorch or legacy ONNX conversions, you can launch the graphical interface:
 
 ```
 python vsr_gui.py
