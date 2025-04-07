@@ -24,7 +24,7 @@ Refer to the [TensorRT guide](https://github.com/Kim2091/SCUNet/blob/main/tensor
 
 ## Using the GUI (No TRT support)
 
-For easy use with PyTorch or legacy ONNX conversions, you can launch the graphical interface:
+For easy use with PyTorch or ONNX, you can launch the graphical interface:
 
 ```
 python vsr_gui.py
