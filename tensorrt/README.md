@@ -19,15 +19,16 @@ This guide helps you use TSCUNet with TensorRT for accelerated video upscaling.
 ## Usage
 
 1. Build TensorRT engine using `trtexec`:
-FP32:
-```bash
-trtexec --onnx="tscunet_fp32.onnx" --optShapes=input:1x15x512x768 --saveEngine=tscunet_fp32.engine --builderOptimizationLevel=5 --useCudaGraph --tacticSources=+CUDNN,-CUBLAS,-CUBLAS_LT
-```
 
-FP16:
-```bash
-trtexec --onnx="tscunet_fp16.onnx" --fp16 --optShapes=input:1x15x512x768 --inputIOFormats=fp16:chw --outputIOFormats=fp16:chw --saveEngine=tscunet_fp16.engine --builderOptimizationLevel=5 --useCudaGraph --tacticSources=+CUDNN,-CUBLAS,-CUBLAS_LT
-```
+    FP32:
+    ```bash
+    trtexec --onnx="tscunet_fp32.onnx" --optShapes=input:1x15x512x768 --saveEngine=tscunet_fp32.engine --builderOptimizationLevel=5 --useCudaGraph --tacticSources=+CUDNN,-CUBLAS,-CUBLAS_LT
+    ```
+    
+    FP16:
+    ```bash
+    trtexec --onnx="tscunet_fp16.onnx" --fp16 --optShapes=input:1x15x512x768 --inputIOFormats=fp16:chw --outputIOFormats=fp16:chw --saveEngine=tscunet_fp16.engine --builderOptimizationLevel=5 --useCudaGraph --tacticSources=+CUDNN,-CUBLAS,-CUBLAS_LT
+    ```
     - You'll want to change the shape in the `--optShapes=input:1x15x512x768` section depending on the resolution of your input video
     - Please note that the shape has to be a multiple of 64. So if your input video is 720x540, you'd want to use `--optShapes=input:1x15x512x768`
 
