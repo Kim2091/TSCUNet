@@ -9,3 +9,4 @@ opencv-python
 onnx
 onnxruntime-gpu
 onnxconverter-common
+PyQt6
