@@ -1,4 +1,4 @@
-# TSPAN
+# New architecture
 Check out my new architecture TSPAN [here](https://github.com/Kim2091/TSPAN)! It improves on TSCUNet in pretty much every way.
 
 # Beginner's Guide
